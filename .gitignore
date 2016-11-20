@@ -81,6 +81,7 @@ tags
 *.lnk
 *.chm
 *~
-.DS_Store
 */.DS_Store
 */**/.DS_Store
+/libops-sharp/
+/build64ui/

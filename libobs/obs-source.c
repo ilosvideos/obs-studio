@@ -1021,6 +1021,12 @@ static inline size_t conv_time_to_frames(const size_t sample_rate,
 static inline void reset_audio_timing(obs_source_t *source, uint64_t timestamp,
 		uint64_t os_time)
 {
+	uint64_t timing_adjust = os_time - timestamp;
+
+	blog(LOG_DEBUG, "reset_audio_timing for source '%s', timestamp '%"PRIu64"', "
+		"os_time %"PRIu64"', timing_adjust %"PRIu64,
+		source->context.name, timestamp, os_time, timing_adjust);
+
 	source->timing_set    = true;
 	source->timing_adjust = os_time - timestamp;
 }
@@ -1032,6 +1038,9 @@ static void reset_audio_data(obs_source_t *source, uint64_t os_time)
 			circlebuf_pop_front(&source->audio_input_buf[i], NULL,
 					source->audio_input_buf[i].size);
 	}
+
+	blog(LOG_DEBUG, "reset_audio_data for source '%s', os_time %"PRIu64,
+		source->context.name, os_time);
 
 	source->last_audio_input_buf_size = 0;
 	source->audio_ts = os_time;
@@ -2453,7 +2462,7 @@ void remove_async_frame(obs_source_t *source, struct obs_source_frame *frame)
 	}
 }
 
-/* #define DEBUG_ASYNC_FRAMES 1 */
+#define DEBUG_ASYNC_FRAMES 1
 
 static bool ready_async_frame(obs_source_t *source, uint64_t sys_time)
 {

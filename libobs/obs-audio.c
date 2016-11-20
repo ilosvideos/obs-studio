@@ -23,7 +23,7 @@ struct ts_info {
 	uint64_t end;
 };
 
-#define DEBUG_AUDIO 0
+#define DEBUG_AUDIO 1
 #define MAX_BUFFERING_TICKS 45
 
 static void push_audio_tree(obs_source_t *parent, obs_source_t *source, void *p)
@@ -206,11 +206,13 @@ static inline void discard_audio(struct obs_core_audio *audio,
 
 	source->last_audio_input_buf_size = 0;
 
+	/*
 #if DEBUG_AUDIO == 1
 	if (is_audio_source)
 		blog(LOG_DEBUG, "audio discarded, new ts: %"PRIu64,
 				ts->end);
 #endif
+*/
 
 	source->audio_ts = ts->end;
 }
@@ -375,9 +377,11 @@ bool audio_callback(void *param,
 
 	audio_size = AUDIO_OUTPUT_FRAMES * sizeof(float);
 
+	/*
 #if DEBUG_AUDIO == 1
 	blog(LOG_DEBUG, "ts %llu-%llu", ts.start, ts.end);
 #endif
+	*/
 
 	/* ------------------------------------------------ */
 	/* build audio render order

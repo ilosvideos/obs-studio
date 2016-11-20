@@ -235,6 +235,12 @@ bool obs_output_actual_start(obs_output_t *output)
 	if (os_atomic_load_long(&output->delay_restart_refs))
 		os_atomic_dec_long(&output->delay_restart_refs);
 
+	blog(LOG_INFO, "Output '%s' obs_output_actual_start: starting_frame_count: %"PRIu32
+		"', starting_skipped_frame_count: %"PRIu32
+		"', starting_drawn_count: %"PRIu32
+		"', starting_lagged_count: %"PRIu32,
+		output->context.name, output->starting_frame_count, output->starting_skipped_frame_count, output->starting_drawn_count, output->starting_lagged_count);
+
 	return success;
 }
 
@@ -1062,7 +1068,7 @@ static void discard_to_idx(struct obs_output *output, size_t idx)
 	da_erase_range(output->interleaved_packets, 0, idx);
 }
 
-#define DEBUG_STARTING_PACKETS 0
+#define DEBUG_STARTING_PACKETS 1
 
 static bool prune_interleaved_packets(struct obs_output *output)
 {
@@ -1084,14 +1090,31 @@ static bool prune_interleaved_packets(struct obs_output *output)
 
 	/* prunes the first video packet if it's too far away from audio */
 	if (prune_start == -1)
+	{
+#if DEBUG_STARTING_PACKETS == 1
+		blog(LOG_DEBUG, "prune_interleaved_packets prune_start == -1");
+#endif
 		return false;
-	else if (prune_start != 0)
+	}
+	else if (prune_start != 0) 
+	{
+#if DEBUG_STARTING_PACKETS == 1
+		blog(LOG_DEBUG, "prune_interleaved_packets prune_start != 0");
+#endif
 		start_idx = (size_t)prune_start;
+	}
 	else
+	{
+#if DEBUG_STARTING_PACKETS == 1
+		blog(LOG_DEBUG, "prune_interleaved_packets prune_start else");
+#endif
 		start_idx = get_interleaved_start_idx(output);
+	}
 
 	if (start_idx)
+	{
 		discard_to_idx(output, start_idx);
+	}
 
 	return true;
 }
