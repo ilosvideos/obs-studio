@@ -83,6 +83,7 @@ tags
 *~
 */.DS_Store
 */**/.DS_Store
+
 /libops-sharp/
 /build64ui/
-/build64-UI/
+/build64cli/
