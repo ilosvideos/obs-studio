@@ -72,8 +72,6 @@ if(WIN32 OR APPLE)
 		message(STATUS "obs-vst submodule not found!  Please fetch/update submodules.  obs-vst plugin disabled.")
 	endif()
 endif()
-
-
 if (NOT ILOS_BUILD)
 	add_subdirectory(image-source)
 endif()
