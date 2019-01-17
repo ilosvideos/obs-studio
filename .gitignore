@@ -96,3 +96,8 @@ tags
 .DS_Store
 */.DS_Store
 */**/.DS_Store
+
+#ilos
+/libops-sharp/
+/build64ui/
+/build64cli/
