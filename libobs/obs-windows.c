@@ -313,7 +313,7 @@ static void log_security_products_by_type(IWSCProductList *prod_list, int type)
 			continue;
 		}
 
-		blog(LOG_INFO, "\t%S: %s (%s)", name,
+		blog(LOG_INFO, "\t%ls: %s (%s)", name,
 				get_str_for_state(prod_state),
 				get_str_for_type(type));
 
