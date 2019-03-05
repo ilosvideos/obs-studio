@@ -33,8 +33,7 @@ static Auth::Def mixerDef = {"Mixer", Auth::Type::OAuth_StreamKey};
 
 MixerAuth::MixerAuth(const Def &d) : OAuthStreamKey(d) {}
 
-bool MixerAuth::GetChannelInfo(bool allow_retry)
-try {
+bool MixerAuth::GetChannelInfo(bool allow_retry) try {
 	std::string client_id = MIXER_CLIENTID;
 	deobfuscate_str(&client_id[0], MIXER_HASH);
 

@@ -44,8 +44,7 @@ TwitchAuth::TwitchAuth(const Def &d) : OAuthStreamKey(d)
 		&TwitchAuth::TryLoadSecondaryUIPanes);
 }
 
-bool TwitchAuth::GetChannelInfo()
-try {
+bool TwitchAuth::GetChannelInfo() try {
 	std::string client_id = TWITCH_CLIENTID;
 	deobfuscate_str(&client_id[0], TWITCH_HASH);
 
