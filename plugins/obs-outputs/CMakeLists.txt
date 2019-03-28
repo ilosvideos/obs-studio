@@ -1,6 +1,6 @@
 project(obs-outputs)
 
-set(WITH_RTMPS AUTO CACHE STRING "Enable RTMPS support with mbedTLS")
+set(WITH_RTMPS OFF CACHE STRING "Enable RTMPS support with mbedTLS")
 set_property(CACHE WITH_RTMPS PROPERTY STRINGS AUTO ON OFF)
 
 option(STATIC_MBEDTLS "Statically link mbedTLS into binary" OFF)
