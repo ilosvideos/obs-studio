@@ -1,6 +1,6 @@
 project(win-mf)
 
-set(ENABLE_WINMF FALSE CACHE BOOL "Enables the now deprecated win-mf plugin")
+set(ENABLE_WINMF TRUE CACHE BOOL "Enables the now deprecated win-mf plugin")
 
 configure_file(
 	"${CMAKE_CURRENT_SOURCE_DIR}/mf-config.hpp.in"
