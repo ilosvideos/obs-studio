@@ -9,7 +9,7 @@ project(obs-studio)
 
 # ilos options
 option(ILOS_BUILD "Build project for ilos" TRUE)
-option(DISABLE_UI "Enables the OBS user interfaces" TRUE)
+option(DISABLE_UI "Disables the OBS user interfaces" TRUE)
 set(QTDIR "\"\"")
 
 option(BUILD_CAPTIONS "Build captions" FALSE)
@@ -30,7 +30,7 @@ if(WIN32)
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
-set(ENABLE_SCRIPTING TRUE CACHE BOOL "Enables scripting")
+set(ENABLE_SCRIPTING FALSE CACHE BOOL "Enables scripting")
 set(SCRIPTING_ENABLED OFF CACHE BOOL "Interal global cmake variable" FORCE)
 
 include(ObsHelpers)
@@ -137,7 +137,7 @@ option(BUILD_TESTS "Build test directory (includes test sources and possibly a p
 mark_as_advanced(BUILD_TESTS)
 
 if(NOT INSTALLER_RUN)
-	option(ENABLE_UI "Enables the OBS user interfaces" ON)
+	option(ENABLE_UI "Enables the OBS user interfaces" OFF)
 	if(DISABLE_UI OR NOT ENABLE_UI)
 		set(UI_ENABLED FALSE)
 	else()
