@@ -6,6 +6,7 @@
 #include <string>
 
 struct obs_frontend_callbacks {
+	virtual ~obs_frontend_callbacks() {}
 	virtual void *obs_frontend_get_main_window(void)=0;
 	virtual void *obs_frontend_get_main_window_handle(void)=0;
 
@@ -25,6 +26,7 @@ struct obs_frontend_callbacks {
 	virtual char *obs_frontend_get_current_scene_collection(void)=0;
 	virtual void obs_frontend_set_current_scene_collection(
 			const char *collection)=0;
+	virtual bool obs_frontend_add_scene_collection(const char *name)=0;
 
 	virtual void obs_frontend_get_profiles(
 			std::vector<std::string> &strings)=0;
@@ -40,6 +42,7 @@ struct obs_frontend_callbacks {
 	virtual bool obs_frontend_recording_active(void)=0;
 
 	virtual void obs_frontend_replay_buffer_start(void)=0;
+	virtual void obs_frontend_replay_buffer_save(void) = 0;
 	virtual void obs_frontend_replay_buffer_stop(void)=0;
 	virtual bool obs_frontend_replay_buffer_active(void)=0;
 
@@ -59,17 +62,38 @@ struct obs_frontend_callbacks {
 	virtual config_t *obs_frontend_get_profile_config(void)=0;
 	virtual config_t *obs_frontend_get_global_config(void)=0;
 
-	virtual void obs_frontend_save(void)=0;
+	virtual void obs_frontend_save(void) = 0;
+	virtual void obs_frontend_defer_save_begin(void) = 0;
+	virtual void obs_frontend_defer_save_end(void) = 0;
 	virtual void obs_frontend_add_save_callback(
 			obs_frontend_save_cb callback, void *private_data)=0;
 	virtual void obs_frontend_remove_save_callback(
+			obs_frontend_save_cb callback, void *private_data)=0;
+
+	virtual void obs_frontend_add_preload_callback(
+			obs_frontend_save_cb callback, void *private_data)=0;
+	virtual void obs_frontend_remove_preload_callback(
 			obs_frontend_save_cb callback, void *private_data)=0;
 
 	virtual void obs_frontend_push_ui_translation(
 			obs_frontend_translate_ui_cb translate)=0;
 	virtual void obs_frontend_pop_ui_translation(void)=0;
 
+	virtual void obs_frontend_set_streaming_service(
+			obs_service_t *service)=0;
+	virtual obs_service_t *obs_frontend_get_streaming_service(void)=0;
+	virtual void obs_frontend_save_streaming_service()=0;
+
+	virtual bool obs_frontend_preview_program_mode_active(void)=0;
+	virtual void obs_frontend_set_preview_program_mode(bool enable)=0;
+	virtual bool obs_frontend_preview_enabled(void)=0;
+	virtual void obs_frontend_set_preview_enabled(bool enable)=0;
+
+	virtual obs_source_t *obs_frontend_get_current_preview_scene(void)=0;
+	virtual void obs_frontend_set_current_preview_scene(obs_source_t *scene)=0;
+
 	virtual void on_load(obs_data_t *settings)=0;
+	virtual void on_preload(obs_data_t *settings)=0;
 	virtual void on_save(obs_data_t *settings)=0;
 	virtual void on_event(enum obs_frontend_event event)=0;
 };

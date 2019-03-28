@@ -35,6 +35,7 @@
 #define SETTING_LIMIT_FRAMERATE  "limit_framerate"
 #define SETTING_CAPTURE_OVERLAYS "capture_overlays"
 #define SETTING_ANTI_CHEAT_HOOK  "anti_cheat_hook"
+#define SETTING_HOOK_RATE        "hook_rate"
 
 /* deprecated */
 #define SETTING_ANY_FULLSCREEN   "capture_any_fullscreen"
@@ -49,7 +50,7 @@
 #define TEXT_MODE                obs_module_text("Mode")
 #define TEXT_GAME_CAPTURE        obs_module_text("GameCapture")
 #define TEXT_ANY_FULLSCREEN      obs_module_text("GameCapture.AnyFullscreen")
-#define TEXT_SLI_COMPATIBILITY   obs_module_text("Compatibility")
+#define TEXT_SLI_COMPATIBILITY   obs_module_text("SLIFix")
 #define TEXT_ALLOW_TRANSPARENCY  obs_module_text("AllowTransparency")
 #define TEXT_FORCE_SCALING       obs_module_text("GameCapture.ForceScaling")
 #define TEXT_SCALE_RES           obs_module_text("GameCapture.ScaleRes")
@@ -62,6 +63,11 @@
 #define TEXT_LIMIT_FRAMERATE     obs_module_text("GameCapture.LimitFramerate")
 #define TEXT_CAPTURE_OVERLAYS    obs_module_text("GameCapture.CaptureOverlays")
 #define TEXT_ANTI_CHEAT_HOOK     obs_module_text("GameCapture.AntiCheatHook")
+#define TEXT_HOOK_RATE           obs_module_text("GameCapture.HookRate")
+#define TEXT_HOOK_RATE_SLOW      obs_module_text("GameCapture.HookRate.Slow")
+#define TEXT_HOOK_RATE_NORMAL    obs_module_text("GameCapture.HookRate.Normal")
+#define TEXT_HOOK_RATE_FAST      obs_module_text("GameCapture.HookRate.Fast")
+#define TEXT_HOOK_RATE_FASTEST   obs_module_text("GameCapture.HookRate.Fastest")
 
 #define TEXT_MODE_ANY            TEXT_ANY_FULLSCREEN
 #define TEXT_MODE_WINDOW         obs_module_text("GameCapture.CaptureWindow")
@@ -79,6 +85,13 @@ enum capture_mode {
 	CAPTURE_MODE_HOTKEY
 };
 
+enum hook_rate {
+	HOOK_RATE_SLOW,
+	HOOK_RATE_NORMAL,
+	HOOK_RATE_FAST,
+	HOOK_RATE_FASTEST
+};
+
 struct game_capture_config {
 	char                          *title;
 	char                          *class;
@@ -87,13 +100,14 @@ struct game_capture_config {
 	enum capture_mode             mode;
 	uint32_t                      scale_cx;
 	uint32_t                      scale_cy;
-	bool                          cursor : 1;
-	bool                          force_shmem : 1;
-	bool                          force_scaling : 1;
-	bool                          allow_transparency : 1;
-	bool                          limit_framerate : 1;
-	bool                          capture_overlays : 1;
-	bool                          anticheat_hook : 1;
+	bool                          cursor;
+	bool                          force_shmem;
+	bool                          force_scaling;
+	bool                          allow_transparency;
+	bool                          limit_framerate;
+	bool                          capture_overlays;
+	bool                          anticheat_hook;
+	enum hook_rate                hook_rate;
 };
 
 struct game_capture {
@@ -119,25 +133,25 @@ struct game_capture {
 	volatile long                 hotkey_window;
 	volatile bool                 deactivate_hook;
 	volatile bool                 activate_hook_now;
-	bool                          wait_for_target_startup : 1;
-	bool                          showing : 1;
-	bool                          active : 1;
-	bool                          capturing : 1;
-	bool                          activate_hook : 1;
-	bool                          process_is_64bit : 1;
-	bool                          error_acquiring : 1;
-	bool                          dwm_capture : 1;
-	bool                          initial_config : 1;
-	bool                          convert_16bit : 1;
-	bool                          is_app : 1;
+	bool                          wait_for_target_startup;
+	bool                          showing;
+	bool                          active;
+	bool                          capturing;
+	bool                          activate_hook;
+	bool                          process_is_64bit;
+	bool                          error_acquiring;
+	bool                          dwm_capture;
+	bool                          initial_config;
+	bool                          convert_16bit;
+	bool                          is_app;
+	bool                          cursor_hidden;
 
 	struct game_capture_config    config;
 
 	ipc_pipe_server_t             pipe;
 	gs_texture_t                  *texture;
 	struct hook_info              *global_hook_info;
-	HANDLE                        keepalive_thread;
-	DWORD                         keepalive_thread_id;
+	HANDLE                        keepalive_mutex;
 	HANDLE                        hook_init;
 	HANDLE                        hook_restart;
 	HANDLE                        hook_stop;
@@ -149,6 +163,7 @@ struct game_capture {
 	HANDLE                        texture_mutexes[2];
 	wchar_t                       *app_sid;
 	int                           retrying;
+	float                         cursor_check_time;
 
 	union {
 		struct {
@@ -265,6 +280,22 @@ static inline HANDLE open_process(DWORD desired_access, bool inherit_handle,
 	return open_process_proc(desired_access, inherit_handle, process_id);
 }
 
+static inline float hook_rate_to_float(enum hook_rate rate)
+{
+	switch (rate) {
+	case HOOK_RATE_SLOW:
+		return 2.0f;
+	case HOOK_RATE_FAST:
+		return 0.5f;
+	case HOOK_RATE_FASTEST:
+		return 0.1f;
+	case HOOK_RATE_NORMAL:
+		/* FALLTHROUGH */
+	default:
+		return 1.0f;
+	}
+}
+
 static void stop_capture(struct game_capture *gc)
 {
 	ipc_pipe_server_free(&gc->pipe);
@@ -281,12 +312,6 @@ static void stop_capture(struct game_capture *gc)
 		gc->data = NULL;
 	}
 
-	if (gc->keepalive_thread) {
-		PostThreadMessage(gc->keepalive_thread_id, WM_QUIT, 0, 0);
-		WaitForSingleObject(gc->keepalive_thread, 300);
-		close_handle(&gc->keepalive_thread);
-	}
-
 	if (gc->app_sid) {
 		LocalFree(gc->app_sid);
 		gc->app_sid = NULL;
@@ -298,6 +323,7 @@ static void stop_capture(struct game_capture *gc)
 	close_handle(&gc->hook_exit);
 	close_handle(&gc->hook_init);
 	close_handle(&gc->hook_data_map);
+	close_handle(&gc->keepalive_mutex);
 	close_handle(&gc->global_hook_info_map);
 	close_handle(&gc->target_process);
 	close_handle(&gc->texture_mutexes[0]);
@@ -394,6 +420,8 @@ static inline void get_config(struct game_capture_config *cfg,
 			SETTING_CAPTURE_OVERLAYS);
 	cfg->anticheat_hook = obs_data_get_bool(settings,
 			SETTING_ANTI_CHEAT_HOOK);
+	cfg->hook_rate = (enum hook_rate)obs_data_get_int(settings,
+			SETTING_HOOK_RATE);
 
 	scale_str = obs_data_get_string(settings, SETTING_SCALE_RES);
 	ret = sscanf(scale_str, "%"PRIu32"x%"PRIu32,
@@ -460,7 +488,7 @@ static bool hotkey_start(void *data, obs_hotkey_pair_id id,
 	if (pressed && gc->config.mode == CAPTURE_MODE_HOTKEY) {
 		info("Activate hotkey pressed");
 		os_atomic_set_long(&gc->hotkey_window,
-				(long)GetForegroundWindow());
+				(long)(uintptr_t)GetForegroundWindow());
 		os_atomic_set_bool(&gc->deactivate_hook, true);
 		os_atomic_set_bool(&gc->activate_hook_now, true);
 	}
@@ -508,7 +536,8 @@ static void game_capture_update(void *data, obs_data_t *settings)
 
 	free_config(&gc->config);
 	gc->config = cfg;
-	gc->retry_interval = DEFAULT_RETRY_INTERVAL;
+	gc->retry_interval = DEFAULT_RETRY_INTERVAL *
+			hook_rate_to_float(gc->config.hook_rate);
 	gc->wait_for_target_startup = false;
 
 	dstr_free(&gc->title);
@@ -541,7 +570,8 @@ static void *game_capture_create(obs_data_t *settings, obs_source_t *source)
 
 	gc->source = source;
 	gc->initial_config = true;
-	gc->retry_interval = DEFAULT_RETRY_INTERVAL;
+	gc->retry_interval = DEFAULT_RETRY_INTERVAL *
+			hook_rate_to_float(gc->config.hook_rate);
 	gc->hotkey_pair = obs_hotkey_pair_register_source(
 			gc->source,
 			HOTKEY_START, TEXT_HOTKEY_START,
@@ -626,7 +656,7 @@ static inline bool is_64bit_process(HANDLE process)
 static inline bool open_target_process(struct game_capture *gc)
 {
 	gc->target_process = open_process(
-			PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+			PROCESS_QUERY_INFORMATION | SYNCHRONIZE,
 			false, gc->process_id);
 	if (!gc->target_process) {
 		warn("could not open process: %s", gc->config.executable);
@@ -641,77 +671,17 @@ static inline bool open_target_process(struct game_capture *gc)
 	return true;
 }
 
-struct keepalive_data {
-	struct game_capture *gc;
-	HANDLE initialized;
-};
-
-#define DEF_FLAGS (WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS)
-
-static DWORD WINAPI keepalive_window_thread(struct keepalive_data *data)
-{
-	HANDLE initialized = data->initialized;
-	struct game_capture *gc = data->gc;
-	wchar_t new_name[64];
-	WNDCLASSW wc;
-	HWND window;
-	MSG msg;
-
-	_snwprintf(new_name, sizeof(new_name), L"%s%lu",
-			WINDOW_HOOK_KEEPALIVE, gc->process_id);
-
-	memset(&wc, 0, sizeof(wc));
-	wc.style = CS_OWNDC;
-	wc.hInstance = GetModuleHandleW(NULL);
-	wc.lpfnWndProc = (WNDPROC)DefWindowProc;
-	wc.lpszClassName = new_name;
-
-	if (!RegisterClass(&wc)) {
-		warn("Failed to create keepalive window class: %lu",
-				GetLastError());
-		return 0;
-	}
-
-	window = CreateWindowExW(0, new_name, NULL, DEF_FLAGS, 0, 0, 1, 1,
-			NULL, NULL, wc.hInstance, NULL);
-	if (!window) {
-		warn("Failed to create keepalive window: %lu",
-				GetLastError());
-		return 0;
-	}
-
-	SetEvent(initialized);
-
-	while (GetMessage(&msg, NULL, 0, 0)) {
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-	}
-
-	DestroyWindow(window);
-	UnregisterClassW(new_name, wc.hInstance);
-
-	return 0;
-}
-
 static inline bool init_keepalive(struct game_capture *gc)
 {
-	struct keepalive_data data;
-	HANDLE initialized = CreateEvent(NULL, false, false, NULL);
+	wchar_t new_name[64];
+	_snwprintf(new_name, 64, L"%s%lu", WINDOW_HOOK_KEEPALIVE,
+			gc->process_id);
 
-	data.gc = gc;
-	data.initialized = initialized;
-
-	gc->keepalive_thread = CreateThread(NULL, 0,
-			(LPTHREAD_START_ROUTINE)keepalive_window_thread,
-			&data, 0, &gc->keepalive_thread_id);
-	if (!gc->keepalive_thread) {
-		warn("Failed to create keepalive window thread: %lu",
-				GetLastError());
+	gc->keepalive_mutex = CreateMutexW(NULL, false, new_name);
+	if (!gc->keepalive_mutex) {
+		warn("Failed to create keepalive mutex: %lu", GetLastError());
 		return false;
 	}
-
-	WaitForSingleObject(initialized, INFINITE);
-	CloseHandle(initialized);
 
 	return true;
 }
@@ -789,23 +759,27 @@ static inline bool init_hook_info(struct game_capture *gc)
 		return false;
 	}
 
+	if (gc->config.force_shmem) {
+		warn("init_hook_info: user is forcing shared memory "
+			"(multi-adapter compatibility mode)");
+	}
+
 	gc->global_hook_info->offsets = gc->process_is_64bit ?
 		offsets64 : offsets32;
 	gc->global_hook_info->capture_overlay = gc->config.capture_overlays;
 	gc->global_hook_info->force_shmem = gc->config.force_shmem;
 	gc->global_hook_info->use_scale = gc->config.force_scaling;
-	gc->global_hook_info->cx = gc->config.scale_cx;
-	gc->global_hook_info->cy = gc->config.scale_cy;
+	if (gc->config.scale_cx)
+		gc->global_hook_info->cx = gc->config.scale_cx;
+	if (gc->config.scale_cy)
+		gc->global_hook_info->cy = gc->config.scale_cy;
 	reset_frame_interval(gc);
 
 	obs_enter_graphics();
-	if (!gs_shared_texture_available())
+	if (!gs_shared_texture_available()) {
+		warn("init_hook_info: shared texture capture unavailable");
 		gc->global_hook_info->force_shmem = true;
-	obs_leave_graphics();
-
-	obs_enter_graphics();
-	if (!gs_shared_texture_available())
-		gc->global_hook_info->force_shmem = true;
+	}
 	obs_leave_graphics();
 
 	return true;
@@ -975,12 +949,16 @@ static const char *blacklisted_exes[] = {
 	"origin",
 	"devenv",
 	"taskmgr",
+	"chrome",
+	"firefox",
 	"systemsettings",
 	"applicationframehost",
 	"cmd",
 	"shellexperiencehost",
 	"winstore.app",
 	"searchui",
+	"lockapp",
+	"windowsinternal.composableshell.experiences.textinput.inputapp",
 	NULL
 };
 
@@ -1100,7 +1078,8 @@ static void setup_window(struct game_capture *gc, HWND window)
 	 * (such as steam) need a little bit of time to load.  ultimately this
 	 * helps prevent crashes */
 	if (gc->wait_for_target_startup) {
-		gc->retry_interval = 3.0f;
+		gc->retry_interval = 3.0f *
+				hook_rate_to_float(gc->config.hook_rate);
 		gc->wait_for_target_startup = false;
 	} else {
 		gc->next_window = window;
@@ -1487,11 +1466,16 @@ static inline void copy_16bit_tex(struct game_capture *gc, int cur_texture,
 
 static void copy_shmem_tex(struct game_capture *gc)
 {
-	int cur_texture = gc->shmem_data->last_tex;
+	int cur_texture;
 	HANDLE mutex = NULL;
 	uint32_t pitch;
 	int next_texture;
 	uint8_t *data;
+
+	if (!gc->shmem_data)
+		return;
+
+	cur_texture = gc->shmem_data->last_tex;
 
 	if (cur_texture < 0 || cur_texture > 1)
 		return;
@@ -1608,8 +1592,24 @@ static inline bool capture_valid(struct game_capture *gc)
 {
 	if (!gc->dwm_capture && !IsWindow(gc->window))
 	       return false;
-	
+
 	return !object_signalled(gc->target_process);
+}
+
+static void check_foreground_window(struct game_capture *gc, float seconds)
+{
+	// Hides the cursor if the user isn't actively in the game
+	gc->cursor_check_time += seconds;
+	if (gc->cursor_check_time >= 0.1f) {
+		DWORD foreground_process_id;
+		GetWindowThreadProcessId(GetForegroundWindow(),
+			&foreground_process_id);
+		if (gc->process_id != foreground_process_id)
+			gc->cursor_hidden = true;
+		else
+			gc->cursor_hidden = false;
+		gc->cursor_check_time = 0.0f;
+	}
 }
 
 static void game_capture_tick(void *data, float seconds)
@@ -1619,7 +1619,8 @@ static void game_capture_tick(void *data, float seconds)
 	bool activate_now = os_atomic_set_bool(&gc->activate_hook_now, false);
 
 	if (activate_now) {
-		HWND hwnd = (HWND)os_atomic_load_long(&gc->hotkey_window);
+		HWND hwnd = (HWND)(uintptr_t)os_atomic_load_long(
+				&gc->hotkey_window);
 
 		if (is_uwp_window(hwnd))
 			hwnd = get_uwp_actual_window(hwnd);
@@ -1629,7 +1630,7 @@ static void game_capture_tick(void *data, float seconds)
 			get_window_class(&gc->class, hwnd);
 
 			gc->priority = WINDOW_PRIORITY_CLASS;
-			gc->retry_time = 10.0f;
+			gc->retry_time = 10.0f * hook_rate_to_float(gc->config.hook_rate);
 			gc->activate_hook = true;
 		} else {
 			deactivate = false;
@@ -1648,7 +1649,7 @@ static void game_capture_tick(void *data, float seconds)
 		return;
 
 	} else if (!gc->showing) {
-		gc->retry_time = 10.0f;
+		gc->retry_time = 10.0f * hook_rate_to_float(gc->config.hook_rate);
 	}
 
 	if (gc->hook_stop && object_signalled(gc->hook_stop)) {
@@ -1674,7 +1675,8 @@ static void game_capture_tick(void *data, float seconds)
 			gc->error_acquiring = true;
 
 		} else if (!gc->capturing) {
-			gc->retry_interval = ERROR_RETRY_INTERVAL;
+			gc->retry_interval = ERROR_RETRY_INTERVAL *
+					hook_rate_to_float(gc->config.hook_rate);
 			stop_capture(gc);
 		}
 	}
@@ -1689,7 +1691,8 @@ static void game_capture_tick(void *data, float seconds)
 			debug("init_capture_data failed");
 
 		if (result != CAPTURE_RETRY && !gc->capturing) {
-			gc->retry_interval = ERROR_RETRY_INTERVAL;
+			gc->retry_interval = ERROR_RETRY_INTERVAL *
+					hook_rate_to_float(gc->config.hook_rate);
 			stop_capture(gc);
 		}
 	}
@@ -1718,6 +1721,7 @@ static void game_capture_tick(void *data, float seconds)
 			}
 
 			if (gc->config.cursor) {
+				check_foreground_window(gc, seconds);
 				obs_enter_graphics();
 				cursor_capture(&gc->cursor_data);
 				obs_leave_graphics();
@@ -1767,18 +1771,20 @@ static void game_capture_render(void *data, gs_effect_t *effect)
 		return;
 
 	effect = obs_get_base_effect(gc->config.allow_transparency ?
-			OBS_EFFECT_DEFAULT : OBS_EFFECT_OPAQUE);
+			OBS_EFFECT_PREMULTIPLIED_ALPHA : OBS_EFFECT_OPAQUE);
 
 	while (gs_effect_loop(effect, "Draw")) {
 		obs_source_draw(gc->texture, 0, 0, 0, 0,
 				gc->global_hook_info->flip);
 
-		if (gc->config.allow_transparency && gc->config.cursor) {
+		if (gc->config.allow_transparency && gc->config.cursor &&
+			!gc->cursor_hidden) {
 			game_capture_render_cursor(gc);
 		}
 	}
 
-	if (!gc->config.allow_transparency && gc->config.cursor) {
+	if (!gc->config.allow_transparency && gc->config.cursor &&
+		!gc->cursor_hidden) {
 		effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 
 		while (gs_effect_loop(effect, "Draw")) {
@@ -1790,13 +1796,13 @@ static void game_capture_render(void *data, gs_effect_t *effect)
 static uint32_t game_capture_width(void *data)
 {
 	struct game_capture *gc = data;
-	return gc->active ? gc->global_hook_info->cx : 0;
+	return gc->active ? gc->cx : 0;
 }
 
 static uint32_t game_capture_height(void *data)
 {
 	struct game_capture *gc = data;
-	return gc->active ? gc->global_hook_info->cy : 0;
+	return gc->active ? gc->cy : 0;
 }
 
 static const char *game_capture_name(void *unused)
@@ -1818,6 +1824,8 @@ static void game_capture_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, SETTING_LIMIT_FRAMERATE, false);
 	obs_data_set_default_bool(settings, SETTING_CAPTURE_OVERLAYS, false);
 	obs_data_set_default_bool(settings, SETTING_ANTI_CHEAT_HOOK, true);
+	obs_data_set_default_int(settings, SETTING_HOOK_RATE,
+			(int)HOOK_RATE_NORMAL);
 }
 
 static bool mode_callback(obs_properties_t *ppts,
@@ -2032,6 +2040,14 @@ static obs_properties_t *game_capture_properties(void *data)
 
 	obs_properties_add_bool(ppts, SETTING_CAPTURE_OVERLAYS,
 			TEXT_CAPTURE_OVERLAYS);
+
+	p = obs_properties_add_list(ppts, SETTING_HOOK_RATE,
+			TEXT_HOOK_RATE, OBS_COMBO_TYPE_LIST,
+			OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, TEXT_HOOK_RATE_SLOW,    HOOK_RATE_SLOW);
+	obs_property_list_add_int(p, TEXT_HOOK_RATE_NORMAL,  HOOK_RATE_NORMAL);
+	obs_property_list_add_int(p, TEXT_HOOK_RATE_FAST,    HOOK_RATE_FAST);
+	obs_property_list_add_int(p, TEXT_HOOK_RATE_FASTEST, HOOK_RATE_FASTEST);
 
 	UNUSED_PARAMETER(data);
 	return ppts;

@@ -14,6 +14,8 @@ class QMouseEvent;
 #define ITEM_TOP    (1<<2)
 #define ITEM_BOTTOM (1<<3)
 
+#define ZOOM_SENSITIVITY 1.125f
+
 enum class ItemHandle : uint32_t {
 	None         = 0,
 	TopLeft      = ITEM_TOP | ITEM_LEFT,
@@ -26,25 +28,24 @@ enum class ItemHandle : uint32_t {
 	BottomRight  = ITEM_BOTTOM | ITEM_RIGHT
 };
 
-enum class ScalingMode : uint32_t {
-	Window = 0,
-	Canvas = 1,
-	Output = 2
-};
-
 class OBSBasicPreview : public OBSQTDisplay {
 	Q_OBJECT
+
+	friend class SourceTree;
 
 private:
 	obs_sceneitem_crop startCrop;
 	vec2         startItemPos;
 	vec2         cropSize;
+	OBSSceneItem stretchGroup;
 	OBSSceneItem stretchItem;
 	ItemHandle   stretchHandle = ItemHandle::None;
-	ScalingMode  scale = ScalingMode::Window;
 	vec2         stretchItemSize;
 	matrix4      screenToItem;
 	matrix4      itemToScreen;
+	matrix4      invGroupTransform;
+
+	gs_texture_t *overflow = nullptr;
 
 	vec2         startPos;
 	vec2         lastMoveOffset;
@@ -56,8 +57,16 @@ private:
 	bool         cropping       = false;
 	bool         locked         = false;
 	bool         scrollMode     = false;
+	bool         fixedScaling   = false;
+	int32_t      scalingLevel   = 0;
+	float        scalingAmount  = 1.0f;
+
+	obs_sceneitem_t *hoveredPreviewItem = nullptr;
+	obs_sceneitem_t *hoveredListItem    = nullptr;
 
 	static vec2 GetMouseEventPos(QMouseEvent *event);
+	static bool DrawSelectedOverflow(obs_scene_t *scene,
+		obs_sceneitem_t *item, void *param);
 	static bool DrawSelectedItem(obs_scene_t *scene, obs_sceneitem_t *item,
 		void *param);
 
@@ -84,31 +93,44 @@ private:
 
 public:
 	OBSBasicPreview(QWidget *parent, Qt::WindowFlags flags = 0);
+	~OBSBasicPreview();
+
+	static OBSBasicPreview *Get();
 
 	virtual void keyPressEvent(QKeyEvent *event) override;
 	virtual void keyReleaseEvent(QKeyEvent *event) override;
 
+	virtual void wheelEvent(QWheelEvent *event) override;
+
 	virtual void mousePressEvent(QMouseEvent *event) override;
 	virtual void mouseReleaseEvent(QMouseEvent *event) override;
 	virtual void mouseMoveEvent(QMouseEvent *event) override;
+	virtual void leaveEvent(QEvent *event) override;
 
+	void DrawOverflow();
 	void DrawSceneEditing();
-	void ResetScrollingOffset();
 
 	inline void SetLocked(bool newLockedVal) {locked = newLockedVal;}
 	inline void ToggleLocked() {locked = !locked;}
 	inline bool Locked() const {return locked;}
 
-	inline void SetScaling(ScalingMode newScaledVal) {scale = newScaledVal;}
-	inline ScalingMode GetScalingMode() const {return scale;}
+	inline void SetFixedScaling(bool newFixedScalingVal) { fixedScaling = newFixedScalingVal; }
+	inline bool IsFixedScaling() const { return fixedScaling; }
 
-	inline float ScrollX() const {return scrollingOffset.x;}
-	inline float ScrollY() const {return scrollingOffset.y;}
+	void SetScalingLevel(int32_t newScalingLevelVal);
+	void SetScalingAmount(float newScalingAmountVal);
+	inline int32_t GetScalingLevel() const { return scalingLevel; }
+	inline float GetScalingAmount() const { return scalingAmount; }
+
+	void ResetScrollingOffset();
+	inline void SetScrollingOffset(float x, float y) {vec2_set(&scrollingOffset, x, y);}
+	inline float GetScrollX() const {return scrollingOffset.x;}
+	inline float GetScrollY() const {return scrollingOffset.y;}
 
 	/* use libobs allocator for alignment because the matrices itemToScreen
 	 * and screenToItem may contain SSE data, which will cause SSE
 	 * instructions to crash if the data is not aligned to at least a 16
-	 * byte boundry. */
+	 * byte boundary. */
 	static inline void* operator new(size_t size) {return bmalloc(size);}
 	static inline void operator delete(void* ptr) {bfree(ptr);}
 };

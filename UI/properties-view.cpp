@@ -236,7 +236,7 @@ QWidget *OBSPropertiesView::AddText(obs_property_t *prop, QFormLayout *layout,
 {
 	const char    *name = obs_property_name(prop);
 	const char    *val  = obs_data_get_string(settings, name);
-	obs_text_type type  = obs_proprety_text_type(prop);
+	obs_text_type type  = obs_property_text_type(prop);
 
 	if (type == OBS_TEXT_MULTILINE) {
 		QPlainTextEdit *edit = new QPlainTextEdit(QT_UTF8(val));
@@ -291,6 +291,12 @@ void OBSPropertiesView::AddPath(obs_property_t *prop, QFormLayout *layout,
 	QLineEdit   *edit      = new QLineEdit();
 	QPushButton *button    = new QPushButton(QTStr("Browse"));
 
+	if (!obs_property_enabled(prop)) {
+		edit->setEnabled(false);
+		button->setEnabled(false);
+	}
+
+	button->setProperty("themeID", "settingsButtons");
 	edit->setText(QT_UTF8(val));
 	edit->setReadOnly(true);
 	edit->setToolTip(QT_UTF8(obs_property_long_description(prop)));
@@ -315,6 +321,9 @@ void OBSPropertiesView::AddInt(obs_property_t *prop, QFormLayout *layout,
 	const char *name = obs_property_name(prop);
 	int        val   = (int)obs_data_get_int(settings, name);
 	QSpinBox   *spin = new QSpinBox();
+
+	if (!obs_property_enabled(prop))
+		spin->setEnabled(false);
 
 	int minVal = obs_property_int_min(prop);
 	int maxVal = obs_property_int_max(prop);
@@ -361,6 +370,9 @@ void OBSPropertiesView::AddFloat(obs_property_t *prop, QFormLayout *layout,
 	const char     *name = obs_property_name(prop);
 	double         val   = obs_data_get_double(settings, name);
 	QDoubleSpinBox *spin = new QDoubleSpinBox();
+
+	if (!obs_property_enabled(prop))
+		spin->setEnabled(false);
 
 	double minVal = obs_property_float_min(prop);
 	double maxVal = obs_property_float_max(prop);
@@ -554,6 +566,9 @@ void OBSPropertiesView::AddEditableList(obs_property_t *prop,
 	QListWidget      *list  = new QListWidget();
 	size_t           count  = obs_data_array_count(array);
 
+	if (!obs_property_enabled(prop))
+		list->setEnabled(false);
+
 	list->setSortingEnabled(false);
 	list->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	list->setToolTip(QT_UTF8(obs_property_long_description(prop)));
@@ -561,6 +576,10 @@ void OBSPropertiesView::AddEditableList(obs_property_t *prop,
 	for (size_t i = 0; i < count; i++) {
 		obs_data_t *item = obs_data_array_item(array, i);
 		list->addItem(QT_UTF8(obs_data_get_string(item, "value")));
+		list->setItemSelected(list->item((int)i),
+				obs_data_get_bool(item, "selected"));
+		list->setItemHidden(list->item((int)i),
+				obs_data_get_bool(item, "hidden"));
 		obs_data_release(item);
 	}
 
@@ -596,6 +615,7 @@ QWidget *OBSPropertiesView::AddButton(obs_property_t *prop)
 	const char *desc = obs_property_description(prop);
 
 	QPushButton *button = new QPushButton(QT_UTF8(desc));
+	button->setProperty("themeID", "settingsButtons");
 	button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
 	return NewWidget(prop, button, SIGNAL(clicked()));
 }
@@ -609,12 +629,25 @@ void OBSPropertiesView::AddColor(obs_property_t *prop, QFormLayout *layout,
 	long long   val         = obs_data_get_int(settings, name);
 	QColor      color       = color_from_int(val);
 
+	if (!obs_property_enabled(prop)) {
+		button->setEnabled(false);
+		colorLabel->setEnabled(false);
+	}
+
+	button->setProperty("themeID", "settingsButtons");
 	button->setText(QTStr("Basic.PropertiesWindow.SelectColor"));
 	button->setToolTip(QT_UTF8(obs_property_long_description(prop)));
 
+	color.setAlpha(255);
+
+	QPalette palette = QPalette(color);
 	colorLabel->setFrameStyle(QFrame::Sunken | QFrame::Panel);
 	colorLabel->setText(color.name(QColor::HexArgb));
-	colorLabel->setPalette(QPalette(color));
+	colorLabel->setPalette(palette);
+	colorLabel->setStyleSheet(
+		QString("background-color :%1; color: %2;")
+			.arg(palette.color(QPalette::Window).name(QColor::HexArgb))
+			.arg(palette.color(QPalette::WindowText).name(QColor::HexArgb)));
 	colorLabel->setAutoFillBackground(true);
 	colorLabel->setAlignment(Qt::AlignCenter);
 	colorLabel->setToolTip(QT_UTF8(obs_property_long_description(prop)));
@@ -671,9 +704,15 @@ void OBSPropertiesView::AddFont(obs_property_t *prop, QFormLayout *layout,
 	QLabel      *fontLabel = new QLabel;
 	QFont       font;
 
+	if (!obs_property_enabled(prop)) {
+		button->setEnabled(false);
+		fontLabel->setEnabled(false);
+	}
+
 	font = fontLabel->font();
 	MakeQFont(font_obj, font, true);
 
+	button->setProperty("themeID", "settingsButtons");
 	button->setText(QTStr("Basic.PropertiesWindow.SelectFont"));
 	button->setToolTip(QT_UTF8(obs_property_long_description(prop)));
 
@@ -1356,6 +1395,9 @@ void OBSPropertiesView::AddProperty(obs_property_t *property,
 		label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 	}
 
+	if (label && !obs_property_enabled(property))
+		label->setEnabled(false);
+
 	if (!widget)
 		return;
 
@@ -1498,7 +1540,7 @@ void WidgetInfo::FloatChanged(const char *setting)
 
 void WidgetInfo::TextChanged(const char *setting)
 {
-	obs_text_type type  = obs_proprety_text_type(property);
+	obs_text_type type  = obs_property_text_type(property);
 
 	if (type == OBS_TEXT_MULTILINE) {
 		QPlainTextEdit *edit = static_cast<QPlainTextEdit*>(widget);
@@ -1595,13 +1637,19 @@ bool WidgetInfo::ColorChanged(const char *setting)
 #endif
 
 	color = QColorDialog::getColor(color, view, QT_UTF8(desc), options);
+	color.setAlpha(255);
 
 	if (!color.isValid())
 		return false;
 
 	QLabel *label = static_cast<QLabel*>(widget);
 	label->setText(color.name(QColor::HexArgb));
-	label->setPalette(QPalette(color));
+	QPalette palette = QPalette(color);
+	label->setPalette(palette);
+	label->setStyleSheet(
+		QString("background-color :%1; color: %2;")
+			.arg(palette.color(QPalette::Window).name(QColor::HexArgb))
+			.arg(palette.color(QPalette::WindowText).name(QColor::HexArgb)));
 
 	obs_data_set_int(view->settings, setting, color_to_int(color));
 
@@ -1615,11 +1663,18 @@ bool WidgetInfo::FontChanged(const char *setting)
 	uint32_t   flags;
 	QFont      font;
 
+	QFontDialog::FontDialogOptions options;
+
+#ifdef __APPLE__
+	options = QFontDialog::DontUseNativeDialog;
+#endif
+
 	if (!font_obj) {
-		font = QFontDialog::getFont(&success, view);
+		QFont initial;
+		font = QFontDialog::getFont(&success, initial, view, "Pick a Font", options);
 	} else {
 		MakeQFont(font_obj, font);
-		font = QFontDialog::getFont(&success, font, view);
+		font = QFontDialog::getFont(&success, font, view, "Pick a Font", options);
 		obs_data_release(font_obj);
 	}
 
@@ -1659,7 +1714,10 @@ void WidgetInfo::EditableListChanged()
 		obs_data_t *arrayItem = obs_data_create();
 		obs_data_set_string(arrayItem, "value",
 				QT_TO_UTF8(item->text()));
-
+		obs_data_set_bool(arrayItem, "selected",
+			item->isSelected());
+		obs_data_set_bool(arrayItem, "hidden",
+			item->isHidden());
 		obs_data_array_push_back(array, arrayItem);
 		obs_data_release(arrayItem);
 	}
@@ -1768,6 +1826,7 @@ public:
 		if (browse) {
 			QPushButton *browseButton =
 				new QPushButton(QTStr("Browse"));
+			browseButton->setProperty("themeID", "settingsButtons");
 			topLayout->addWidget(browseButton);
 			topLayout->setAlignment(browseButton, Qt::AlignVCenter);
 

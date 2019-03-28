@@ -1,4 +1,3 @@
-option(ENABLE_UI "Enables the OBS user interfaces" ON)
 if(DISABLE_UI)
 	message(STATUS "UI disabled")
 	return()
@@ -8,32 +7,50 @@ else()
 	set(FIND_MODE QUIET)
 endif()
 
+if(BROWSER_AVAILABLE_INTERNAL AND WIN32)
+	add_definitions(-DBROWSER_AVAILABLE)
+endif()
+
 add_subdirectory(obs-frontend-api)
 
 # ----------------------------------------------------------------------------
 
 project(obs)
 
-if(DEFINED QTDIR${_lib_suffix})
-	list(APPEND CMAKE_PREFIX_PATH "${QTDIR${_lib_suffix}}")
-elseif(DEFINED QTDIR)
-	list(APPEND CMAKE_PREFIX_PATH "${QTDIR}")
-elseif(DEFINED ENV{QTDIR${_lib_suffix}})
-	list(APPEND CMAKE_PREFIX_PATH "$ENV{QTDIR${_lib_suffix}}")
-elseif(DEFINED ENV{QTDIR})
-	list(APPEND CMAKE_PREFIX_PATH "$ENV{QTDIR}")
+set(DISABLE_UPDATE_MODULE TRUE CACHE BOOL "Disables building the update module")
+
+if(NOT DEFINED TWITCH_CLIENTID OR "${TWITCH_CLIENTID}" STREQUAL "" OR
+   NOT DEFINED TWITCH_HASH     OR "${TWITCH_HASH}"     STREQUAL "" OR
+   NOT BROWSER_AVAILABLE_INTERNAL)
+	set(TWITCH_ENABLED FALSE)
+	set(TWITCH_CLIENTID "")
+	set(TWITCH_HASH "0")
+else()
+	set(TWITCH_ENABLED TRUE)
 endif()
+
+if(NOT DEFINED MIXER_CLIENTID OR "${MIXER_CLIENTID}" STREQUAL "" OR
+   NOT DEFINED MIXER_HASH     OR "${MIXER_HASH}"     STREQUAL "" OR
+   NOT BROWSER_AVAILABLE_INTERNAL)
+	set(MIXER_ENABLED FALSE)
+	set(MIXER_CLIENTID "")
+	set(MIXER_HASH "0")
+else()
+	set(MIXER_ENABLED TRUE)
+endif()
+
+configure_file(
+	"${CMAKE_CURRENT_SOURCE_DIR}/ui-config.h.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/ui-config.h")
 
 set(CMAKE_INCLUDE_CURRENT_DIR TRUE)
 set(CMAKE_AUTOMOC TRUE)
 
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-	set(_lib_suffix 64)
-else()
-	set(_lib_suffix 32)
-endif()
+find_package(FFmpeg REQUIRED COMPONENTS avcodec avutil avformat)
 
-find_package(Qt5Widgets ${FIND_MODE})
+if(APPLE)
+	find_package(Qt5MacExtras REQUIRED)
+endif(APPLE)
 
 if(NOT Qt5Widgets_FOUND)
 	if (ENABLE_UI)
@@ -44,17 +61,43 @@ if(NOT Qt5Widgets_FOUND)
 	endif()
 endif()
 
+
+include_directories(${FFMPEG_INCLUDE_DIRS})
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(SYSTEM "obs-frontend-api")
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/libobs")
+include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/deps/libff")
+include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/deps/json11")
+if(BROWSER_AVAILABLE_INTERNAL)
+	include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/plugins/obs-browser/panel")
+endif()
 
 find_package(Libcurl REQUIRED)
 include_directories(${LIBCURL_INCLUDE_DIRS})
 add_definitions(${LIBCURL_DEFINITIONS})
 
 if(WIN32)
+	include_directories(${OBS_JANSSON_INCLUDE_DIRS})
+	include_directories(${BLAKE2_INCLUDE_DIR})
+
 	set(obs_PLATFORM_SOURCES
 		platform-windows.cpp
+		win-update/update-window.cpp
+		win-update/win-update.cpp
+		win-update/win-update-helpers.cpp
 		obs.rc)
+	set(obs_PLATFORM_HEADERS
+		win-update/update-window.hpp
+		win-update/win-update.hpp
+		win-update/win-update-helpers.hpp)
+	set(obs_PLATFORM_LIBRARIES
+		crypt32
+		blake2
+		${OBS_JANSSON_IMPORT})
+
+	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /LARGEADDRESSAWARE")
+	endif()
 elseif(APPLE)
 	set(obs_PLATFORM_SOURCES
 		platform-osx.mm)
@@ -87,30 +130,83 @@ elseif(UNIX)
                 Qt5::X11Extras)
 endif()
 
+if(BROWSER_AVAILABLE_INTERNAL)
+	list(APPEND obs_PLATFORM_SOURCES
+		obf.c
+		auth-oauth.cpp
+		)
+	list(APPEND obs_PLATFORM_HEADERS
+		obf.h
+		auth-oauth.hpp
+		)
+
+	if(TWITCH_ENABLED)
+		list(APPEND obs_PLATFORM_SOURCES
+			auth-twitch.cpp
+			)
+		list(APPEND obs_PLATFORM_HEADERS
+			auth-twitch.hpp
+			)
+	endif()
+
+	if(MIXER_ENABLED)
+		list(APPEND obs_PLATFORM_SOURCES
+			auth-mixer.cpp
+			)
+		list(APPEND obs_PLATFORM_HEADERS
+			auth-mixer.hpp
+			)
+	endif()
+endif()
+
+set(obs_libffutil_SOURCES
+	../deps/libff/libff/ff-util.c
+	)
+set(obs_libffutil_HEADERS
+	../deps/libff/libff/ff-util.h
+	)
+
+if(MSVC)
+	set_source_files_properties(
+		../deps/libff/libff/ff-util.c
+		PROPERTIES COMPILE_FLAGS -Dinline=__inline
+		)
+endif()
+
 set(obs_SOURCES
 	${obs_PLATFORM_SOURCES}
+	${obs_libffutil_SOURCES}
+	../deps/json11/json11.cpp
 	obs-app.cpp
+	window-dock.cpp
 	api-interface.cpp
 	window-basic-main.cpp
+	window-basic-stats.cpp
 	window-basic-filters.cpp
 	window-basic-settings.cpp
 	window-basic-interaction.cpp
 	window-basic-properties.cpp
+	window-basic-auto-config.cpp
 	window-basic-main-outputs.cpp
 	window-basic-source-select.cpp
+	window-basic-settings-stream.cpp
+	window-basic-auto-config-test.cpp
 	window-basic-main-scene-collections.cpp
 	window-basic-main-transitions.cpp
 	window-basic-main-dropfiles.cpp
 	window-basic-main-profiles.cpp
-	window-license-agreement.cpp
+	window-basic-main-browser.cpp
 	window-basic-status-bar.cpp
 	window-basic-adv-audio.cpp
 	window-basic-transform.cpp
 	window-basic-preview.cpp
+	window-basic-about.cpp
 	window-namedialog.cpp
 	window-log-reply.cpp
 	window-projector.cpp
 	window-remux.cpp
+	auth-base.cpp
+	source-tree.cpp
 	properties-view.cpp
 	focus-list.cpp
 	menu-button.cpp
@@ -119,6 +215,8 @@ set(obs_SOURCES
 	adv-audio-control.cpp
 	item-widget-helpers.cpp
 	visibility-checkbox.cpp
+	locked-checkbox.cpp
+	horizontal-scroll-area.cpp
 	vertical-scroll-area.cpp
 	visibility-item-widget.cpp
 	slider-absoluteset-style.cpp
@@ -132,17 +230,23 @@ set(obs_SOURCES
 	qt-wrappers.cpp)
 
 set(obs_HEADERS
+	${obs_PLATFORM_HEADERS}
+	${obs_libffutil_HEADERS}
+	../deps/json11/json11.hpp
 	obs-app.hpp
 	platform.hpp
+	window-dock.hpp
 	window-main.hpp
 	window-basic-main.hpp
+	window-basic-stats.hpp
 	window-basic-filters.hpp
 	window-basic-settings.hpp
 	window-basic-interaction.hpp
 	window-basic-properties.hpp
+	window-basic-auto-config.hpp
 	window-basic-main-outputs.hpp
 	window-basic-source-select.hpp
-	window-license-agreement.hpp
+	window-basic-about.hpp
 	window-basic-status-bar.hpp
 	window-basic-adv-audio.hpp
 	window-basic-transform.hpp
@@ -151,9 +255,12 @@ set(obs_HEADERS
 	window-log-reply.hpp
 	window-projector.hpp
 	window-remux.hpp
+	auth-base.hpp
+	source-tree.hpp
 	properties-view.hpp
 	properties-view.moc.hpp
 	display-helpers.hpp
+	balance-slider.hpp
 	double-slider.hpp
 	focus-list.hpp
 	menu-button.hpp
@@ -162,6 +269,9 @@ set(obs_HEADERS
 	adv-audio-control.hpp
 	item-widget-helpers.hpp
 	visibility-checkbox.hpp
+	locked-checkbox.hpp
+	horizontal-scroll-area.hpp
+	expand-checkbox.hpp
 	vertical-scroll-area.hpp
 	visibility-item-widget.hpp
 	slider-absoluteset-style.hpp
@@ -172,11 +282,16 @@ set(obs_HEADERS
 	source-label.hpp
 	remote-text.hpp
 	audio-encoders.hpp
-	qt-wrappers.hpp)
+	qt-wrappers.hpp
+	clickable-label.hpp)
 
 set(obs_UI
 	forms/NameDialog.ui
-	forms/OBSLicenseAgreement.ui
+	forms/AutoConfigStartPage.ui
+	forms/AutoConfigVideoPage.ui
+	forms/AutoConfigStreamPage.ui
+	forms/AutoConfigTestPage.ui
+	forms/ColorSelect.ui
 	forms/OBSLogReply.ui
 	forms/OBSBasic.ui
 	forms/OBSBasicTransform.ui
@@ -184,7 +299,9 @@ set(obs_UI
 	forms/OBSBasicSettings.ui
 	forms/OBSBasicSourceSelect.ui
 	forms/OBSBasicInteraction.ui
-	forms/OBSRemux.ui)
+	forms/OBSUpdate.ui
+	forms/OBSRemux.ui
+	forms/OBSAbout.ui)
 
 set(obs_QRC
 	forms/obs.qrc)
@@ -212,16 +329,31 @@ endif()
 
 target_link_libraries(obs
 	libobs
-	libff
 	Qt5::Widgets
 	obs-frontend-api
+	${FFMPEG_LIBRARIES}
 	${LIBCURL_LIBRARIES}
 	${obs_PLATFORM_LIBRARIES})
+
+if (APPLE)
+	target_link_libraries(obs
+			Qt5::MacExtras)
+	set_target_properties(obs PROPERTIES LINK_FLAGS "-pagezero_size 10000 -image_base 100000000")
+	set_property(
+		TARGET obs
+		APPEND
+		PROPERTY INSTALL_RPATH
+		"/usr/local/Cellar/python3/3.6.4_2/Frameworks/Python.framework/Versions/3.6/lib/"
+		"/Library/Frameworks/Python.framework/Versions/3.6/lib/"
+		"/opt/local/Library/Frameworks/Python.framework/Versions/3.6/lib/"
+	)
+endif()
 
 define_graphic_modules(obs)
 
 install_obs_core(obs)
 install_obs_data(obs data obs-studio)
+install_obs_data_file(obs ../AUTHORS obs-studio/authors)
 
 if (UNIX AND UNIX_STRUCTURE AND NOT APPLE)
 	install(FILES dist/obs.desktop DESTINATION ${CMAKE_INSTALL_FULL_DATAROOTDIR}/applications)
@@ -230,3 +362,6 @@ if (UNIX AND UNIX_STRUCTURE AND NOT APPLE)
 endif()
 
 add_subdirectory(frontend-plugins)
+if(WIN32)
+	add_subdirectory(win-update/updater)
+endif()

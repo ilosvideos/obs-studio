@@ -20,12 +20,15 @@
 
 #include <util/util.hpp>
 #include <QDialog>
+#include <QPointer>
 #include <memory>
 #include <string>
 
 #include <libff/ff-util.h>
 
-#include <obs.h>
+#include <obs.hpp>
+
+#include "auth-base.hpp"
 
 class OBSBasic;
 class QAbstractButton;
@@ -36,6 +39,10 @@ class OBSPropertiesView;
 class OBSHotkeyWidget;
 
 #include "ui_OBSBasicSettings.h"
+
+#define VOLUME_METER_DECAY_FAST        23.53
+#define VOLUME_METER_DECAY_MEDIUM      11.76
+#define VOLUME_METER_DECAY_SLOW        8.57
 
 class SilentUpdateCheckBox : public QCheckBox {
 	Q_OBJECT
@@ -86,6 +93,8 @@ private:
 
 	std::unique_ptr<Ui::OBSBasicSettings> ui;
 
+	std::shared_ptr<Auth> auth;
+
 	bool generalChanged = false;
 	bool stream1Changed = false;
 	bool outputsChanged = false;
@@ -98,6 +107,7 @@ private:
 	std::string savedTheme;
 
 	int lastSimpleRecQualityIdx = 0;
+	int lastChannelSetupIdx = 0;
 
 	OBSFFFormatDesc formats;
 
@@ -180,7 +190,6 @@ private:
 
 	bool QueryChanges();
 
-	void LoadServiceTypes();
 	void LoadEncoderTypes();
 	void LoadColorRanges();
 	void LoadFormats();
@@ -201,6 +210,24 @@ private:
 	/* general */
 	void LoadLanguageList();
 	void LoadThemeList();
+
+	/* stream */
+	void InitStreamPage();
+	inline bool IsCustomService() const;
+	void LoadServices(bool showAll);
+	void OnOAuthStreamKeyConnected();
+	void OnAuthConnected();
+	QString lastService;
+private slots:
+	void UpdateServerList();
+	void UpdateKeyLink();
+	void on_show_clicked();
+	void on_authPwShow_clicked();
+	void on_connectAccount_clicked();
+	void on_disconnectAccount_clicked();
+	void on_useStreamKey_clicked();
+	void on_useAuth_toggled();
+private:
 
 	/* output */
 	void LoadSimpleOutputSettings();
@@ -240,6 +267,7 @@ private:
 
 	void FillSimpleRecordingValues();
 	void FillSimpleStreamingValues();
+	void FillAudioMonitoringDevices();
 
 	void RecalcOutputResPixels(const char *resText);
 
@@ -249,12 +277,13 @@ private slots:
 	void on_listWidget_itemSelectionChanged();
 	void on_buttonBox_clicked(QAbstractButton *button);
 
-	void on_streamType_currentIndexChanged(int idx);
+	void on_service_currentIndexChanged(int idx);
 	void on_simpleOutputBrowse_clicked();
 	void on_advOutRecPathBrowse_clicked();
 	void on_advOutFFPathBrowse_clicked();
 	void on_advOutEncoder_currentIndexChanged(int idx);
 	void on_advOutRecEncoder_currentIndexChanged(int idx);
+	void on_advOutFFIgnoreCompat_stateChanged(int state);
 	void on_advOutFFFormat_currentIndexChanged(int idx);
 	void on_advOutFFAEncoder_currentIndexChanged(int idx);
 	void on_advOutFFVEncoder_currentIndexChanged(int idx);
@@ -272,6 +301,8 @@ private slots:
 	void AudioChanged();
 	void AudioChangedRestart();
 	void ReloadAudioSources();
+	void SurroundWarning(int idx);
+	void SpeakerLayoutChanged(int idx);
 	void OutputsChanged();
 	void Stream1Changed();
 	void VideoChanged();
@@ -284,6 +315,8 @@ private slots:
 
 	void UpdateStreamDelayEstimate();
 
+	void UpdateAutomaticReplayBufferCheckboxes();
+
 	void AdvOutRecCheckWarnings();
 
 	void SimpleRecordingQualityChanged();
@@ -291,12 +324,16 @@ private slots:
 	void SimpleRecordingQualityLosslessWarning(int idx);
 
 	void SimpleReplayBufferChanged();
+	void AdvReplayBufferChanged();
 
 	void SimpleStreamingEncoderChanged();
+
+	OBSService SpawnTempService();
 
 protected:
 	virtual void closeEvent(QCloseEvent *event);
 
 public:
 	OBSBasicSettings(QWidget *parent);
+	~OBSBasicSettings();
 };

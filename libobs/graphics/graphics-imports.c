@@ -141,10 +141,12 @@ bool load_graphics_imports(struct gs_exports *exports, void *module,
 
 	GRAPHICS_IMPORT(gs_vertexbuffer_destroy);
 	GRAPHICS_IMPORT(gs_vertexbuffer_flush);
+	GRAPHICS_IMPORT(gs_vertexbuffer_flush_direct);
 	GRAPHICS_IMPORT(gs_vertexbuffer_get_data);
 
 	GRAPHICS_IMPORT(gs_indexbuffer_destroy);
 	GRAPHICS_IMPORT(gs_indexbuffer_flush);
+	GRAPHICS_IMPORT(gs_indexbuffer_flush_direct);
 	GRAPHICS_IMPORT(gs_indexbuffer_get_data);
 	GRAPHICS_IMPORT(gs_indexbuffer_get_num_indices);
 	GRAPHICS_IMPORT(gs_indexbuffer_get_type);
@@ -169,6 +171,8 @@ bool load_graphics_imports(struct gs_exports *exports, void *module,
 	GRAPHICS_IMPORT(gs_shader_set_default);
 	GRAPHICS_IMPORT(gs_shader_set_next_sampler);
 
+	GRAPHICS_IMPORT_OPTIONAL(device_nv12_available);
+
 	/* OSX/Cocoa specific functions */
 #ifdef __APPLE__
 	GRAPHICS_IMPORT_OPTIONAL(device_texture_create_from_iosurface);
@@ -187,6 +191,11 @@ bool load_graphics_imports(struct gs_exports *exports, void *module,
 	GRAPHICS_IMPORT_OPTIONAL(gs_texture_get_dc);
 	GRAPHICS_IMPORT_OPTIONAL(gs_texture_release_dc);
 	GRAPHICS_IMPORT_OPTIONAL(device_texture_open_shared);
+	GRAPHICS_IMPORT_OPTIONAL(device_texture_get_shared_handle);
+	GRAPHICS_IMPORT_OPTIONAL(device_texture_acquire_sync);
+	GRAPHICS_IMPORT_OPTIONAL(device_texture_release_sync);
+	GRAPHICS_IMPORT_OPTIONAL(device_texture_create_nv12);
+	GRAPHICS_IMPORT_OPTIONAL(device_stagesurface_create_nv12);
 #endif
 
 	return success;

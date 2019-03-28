@@ -3,12 +3,13 @@
 #include <obs.hpp>
 #include <QWidget>
 #include <QPointer>
+#include "balance-slider.hpp"
 
 class QGridLayout;
 class QLabel;
 class QSpinBox;
 class QCheckBox;
-class QSlider;
+class QComboBox;
 
 class OBSAdvAudioCtrl : public QObject {
 	Q_OBJECT
@@ -18,15 +19,16 @@ private:
 
 	QPointer<QWidget>      forceMonoContainer;
 	QPointer<QWidget>      mixerContainer;
-	QPointer<QWidget>      panningContainer;
+	QPointer<QWidget>      balanceContainer;
 
 	QPointer<QLabel>       nameLabel;
 	QPointer<QSpinBox>     volume;
 	QPointer<QCheckBox>    forceMono;
-	QPointer<QSlider>      panning;
+	QPointer<BalanceSlider>balance;
 	QPointer<QLabel>       labelL;
 	QPointer<QLabel>       labelR;
 	QPointer<QSpinBox>     syncOffset;
+	QPointer<QComboBox>    monitoringType;
 	QPointer<QCheckBox>    mixer1;
 	QPointer<QCheckBox>    mixer2;
 	QPointer<QCheckBox>    mixer3;
@@ -49,6 +51,7 @@ public:
 	virtual ~OBSAdvAudioCtrl();
 
 	inline obs_source_t *GetSource() const {return source;}
+	void ShowAudioControl(QGridLayout *layout);
 
 public slots:
 	void SourceFlagsChanged(uint32_t flags);
@@ -58,12 +61,14 @@ public slots:
 
 	void volumeChanged(int percentage);
 	void downmixMonoChanged(bool checked);
-	void panningChanged(int val);
+	void balanceChanged(int val);
 	void syncOffsetChanged(int milliseconds);
+	void monitoringTypeChanged(int index);
 	void mixer1Changed(bool checked);
 	void mixer2Changed(bool checked);
 	void mixer3Changed(bool checked);
 	void mixer4Changed(bool checked);
 	void mixer5Changed(bool checked);
 	void mixer6Changed(bool checked);
+	void ResetBalance();
 };

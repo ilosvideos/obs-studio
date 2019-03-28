@@ -1,6 +1,7 @@
 /*
- * Copyright (c) 2013-2014 Ruwen Hahn <palana@stunned.de>
+ * Copyright (c) 2013-2018 Ruwen Hahn <palana@stunned.de>
  *                         Hugh "Jim" Bailey <obs.jim@gmail.com>
+ *                         Marvin Scholz <epirat07@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -22,6 +23,8 @@
 #include <dlfcn.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
 
 #include <CoreServices/CoreServices.h>
 #include <mach/mach.h>
@@ -30,6 +33,8 @@
 #include <IOKit/pwr_mgt/IOPMLib.h>
 
 #import <Cocoa/Cocoa.h>
+
+#include "apple/cfstring-utils.h"
 
 /* clock function selection taken from libc++ */
 static uint64_t ns_time_simple()
@@ -311,4 +316,194 @@ void os_inhibit_sleep_destroy(os_inhibit_t *info)
 		CFRelease(info->reason);
 		bfree(info);
 	}
+}
+
+static int physical_cores = 0;
+static int logical_cores = 0;
+static bool core_count_initialized = false;
+
+static void os_get_cores_internal(void)
+{
+	if (core_count_initialized)
+		return;
+
+	core_count_initialized = true;
+
+	size_t size;
+	int    ret;
+
+	size = sizeof(physical_cores);
+	ret = sysctlbyname("machdep.cpu.core_count", &physical_cores,
+			&size, NULL, 0);
+	if (ret != 0)
+		return;
+
+	ret = sysctlbyname("machdep.cpu.thread_count", &logical_cores,
+			&size, NULL, 0);
+}
+
+int os_get_physical_cores(void)
+{
+	if (!core_count_initialized)
+		os_get_cores_internal();
+	return physical_cores;
+}
+
+int os_get_logical_cores(void)
+{
+	if (!core_count_initialized)
+		os_get_cores_internal();
+	return logical_cores;
+}
+
+static inline bool os_get_sys_memory_usage_internal(vm_statistics_t vmstat)
+{
+	mach_msg_type_number_t out_count = HOST_VM_INFO_COUNT;
+	if (host_statistics(mach_host_self(), HOST_VM_INFO,
+	    (host_info_t)vmstat, &out_count) != KERN_SUCCESS)
+		return false;
+	return true;
+}
+
+uint64_t os_get_sys_free_size(void)
+{
+	vm_statistics_data_t vmstat = {};
+	if (!os_get_sys_memory_usage_internal(&vmstat))
+		return 0;
+
+	return vmstat.free_count * vm_page_size;
+}
+
+#ifndef MACH_TASK_BASIC_INFO
+typedef task_basic_info_data_t mach_task_basic_info_data_t;
+#endif
+
+static inline bool os_get_proc_memory_usage_internal(
+		mach_task_basic_info_data_t *taskinfo)
+{
+#ifdef MACH_TASK_BASIC_INFO
+	const task_flavor_t flavor = MACH_TASK_BASIC_INFO;
+	mach_msg_type_number_t out_count = MACH_TASK_BASIC_INFO_COUNT;
+#else
+	const task_flavor_t flavor = TASK_BASIC_INFO;
+	mach_msg_type_number_t out_count = TASK_BASIC_INFO_COUNT;
+#endif
+	if (task_info(mach_task_self(), flavor,
+	    (task_info_t)taskinfo, &out_count) != KERN_SUCCESS)
+		return false;
+	return true;
+}
+
+bool os_get_proc_memory_usage(os_proc_memory_usage_t *usage)
+{
+	mach_task_basic_info_data_t taskinfo = {};
+	if (!os_get_proc_memory_usage_internal(&taskinfo))
+		return false;
+
+	usage->resident_size = taskinfo.resident_size;
+	usage->virtual_size  = taskinfo.virtual_size;
+	return true;
+}
+
+uint64_t os_get_proc_resident_size(void)
+{
+	mach_task_basic_info_data_t taskinfo = {};
+	if (!os_get_proc_memory_usage_internal(&taskinfo))
+		return 0;
+	return taskinfo.resident_size;
+}
+
+uint64_t os_get_proc_virtual_size(void)
+{
+	mach_task_basic_info_data_t taskinfo = {};
+	if (!os_get_proc_memory_usage_internal(&taskinfo))
+		return 0;
+	return taskinfo.virtual_size;
+}
+
+/* Obtains a copy of the contents of a CFString in specified encoding.
+ * Returns char* (must be bfree'd by caller) or NULL on failure.
+ */
+char *cfstr_copy_cstr(CFStringRef cfstring, CFStringEncoding cfstring_encoding)
+{
+	if (!cfstring)
+		return NULL;
+
+	// Try the quick way to obtain the buffer
+	const char *tmp_buffer = CFStringGetCStringPtr(cfstring,
+			cfstring_encoding);
+
+	if (tmp_buffer != NULL)
+		return bstrdup(tmp_buffer);
+
+	// The quick way did not work, try the more expensive one
+	CFIndex length = CFStringGetLength(cfstring);
+	CFIndex max_size =
+		CFStringGetMaximumSizeForEncoding(length, cfstring_encoding);
+
+	// If result would exceed LONG_MAX, kCFNotFound is returned
+	if (max_size == kCFNotFound)
+		return NULL;
+
+	// Account for the null terminator
+	max_size++;
+
+	char *buffer = bmalloc(max_size);
+
+	if (buffer == NULL) {
+		return NULL;
+	}
+
+	// Copy CFString in requested encoding to buffer
+	Boolean success =
+		CFStringGetCString(cfstring, buffer, max_size, cfstring_encoding);
+
+	if (!success) {
+		bfree(buffer);
+		buffer = NULL;
+	}
+	return buffer;
+}
+
+/* Copies the contents of a CFString in specified encoding to a given dstr.
+ * Returns true on success or false on failure.
+ * In case of failure, the dstr capacity but not size is changed.
+ */
+bool cfstr_copy_dstr(CFStringRef cfstring,
+	CFStringEncoding cfstring_encoding, struct dstr *str)
+{
+	if (!cfstring)
+		return false;
+
+	// Try the quick way to obtain the buffer
+	const char *tmp_buffer = CFStringGetCStringPtr(cfstring,
+			cfstring_encoding);
+
+	if (tmp_buffer != NULL) {
+		dstr_copy(str, tmp_buffer);
+		return true;
+	}
+
+	// The quick way did not work, try the more expensive one
+	CFIndex length = CFStringGetLength(cfstring);
+	CFIndex max_size =
+		CFStringGetMaximumSizeForEncoding(length, cfstring_encoding);
+
+	// If result would exceed LONG_MAX, kCFNotFound is returned
+	if (max_size == kCFNotFound)
+		return NULL;
+
+	// Account for the null terminator
+	max_size++;
+
+	dstr_ensure_capacity(str, max_size);
+
+	// Copy CFString in requested encoding to dstr buffer
+	Boolean success = CFStringGetCString(
+		cfstring, str->array, max_size, cfstring_encoding);
+
+	if (success)
+		dstr_resize(str, max_size);
+
+	return (bool)success;
 }

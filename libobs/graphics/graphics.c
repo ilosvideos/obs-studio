@@ -28,11 +28,7 @@
 #include "effect-parser.h"
 #include "effect.h"
 
-#ifdef _MSC_VER
-static __declspec(thread) graphics_t *thread_graphics = NULL;
-#else /* assume GCC or that other compiler we dare not mention */
-static __thread graphics_t *thread_graphics = NULL;
-#endif
+static THREAD_LOCAL graphics_t *thread_graphics = NULL;
 
 static inline bool gs_obj_valid(const void *obj, const char *f,
 		const char *name)
@@ -1468,6 +1464,46 @@ gs_vertbuffer_t *gs_vertexbuffer_create(struct gs_vb_data *data,
 	if (!gs_valid("gs_vertexbuffer_create"))
 		return NULL;
 
+	if (data && data->num && (flags & GS_DUP_BUFFER) != 0) {
+		struct gs_vb_data *new_data = gs_vbdata_create();
+
+		new_data->num = data->num;
+
+#define DUP_VAL(val) \
+		do { \
+			if (data->val) \
+				new_data->val = bmemdup(data->val, \
+						sizeof(*data->val) * \
+						data->num); \
+		} while (false)
+
+		DUP_VAL(points);
+		DUP_VAL(normals);
+		DUP_VAL(tangents);
+		DUP_VAL(colors);
+#undef DUP_VAL
+
+		if (data->tvarray && data->num_tex) {
+			new_data->num_tex = data->num_tex;
+			new_data->tvarray = bzalloc(
+					sizeof(struct gs_tvertarray) *
+					data->num_tex);
+
+			for (size_t i = 0; i < data->num_tex; i++) {
+				struct gs_tvertarray *tv = &data->tvarray[i];
+				struct gs_tvertarray *new_tv =
+					&new_data->tvarray[i];
+				size_t size = tv->width * sizeof(float);
+
+				new_tv->width = tv->width;
+				new_tv->array = bmemdup(tv->array,
+						size * data->num);
+			}
+		}
+
+		data = new_data;
+	}
+
 	return graphics->exports.device_vertexbuffer_create(graphics->device,
 			data, flags);
 }
@@ -1479,6 +1515,13 @@ gs_indexbuffer_t *gs_indexbuffer_create(enum gs_index_type type,
 
 	if (!gs_valid("gs_indexbuffer_create"))
 		return NULL;
+
+	if (indices && num && (flags & GS_DUP_BUFFER) != 0) {
+		size_t size = type == GS_UNSIGNED_SHORT
+			? sizeof(unsigned short)
+			: sizeof(unsigned long);
+		indices = bmemdup(indices, size * num);
+	}
 
 	return graphics->exports.device_indexbuffer_create(graphics->device,
 			type, indices, num, flags);
@@ -2430,6 +2473,16 @@ void gs_vertexbuffer_flush(gs_vertbuffer_t *vertbuffer)
 	thread_graphics->exports.gs_vertexbuffer_flush(vertbuffer);
 }
 
+void gs_vertexbuffer_flush_direct(gs_vertbuffer_t *vertbuffer,
+		const struct gs_vb_data *data)
+{
+	if (!gs_valid_p2("gs_vertexbuffer_flush_direct", vertbuffer, data))
+		return;
+
+	thread_graphics->exports.gs_vertexbuffer_flush_direct(vertbuffer,
+			data);
+}
+
 struct gs_vb_data *gs_vertexbuffer_get_data(const gs_vertbuffer_t *vertbuffer)
 {
 	if (!gs_valid_p("gs_vertexbuffer_get_data", vertbuffer))
@@ -2458,6 +2511,15 @@ void   gs_indexbuffer_flush(gs_indexbuffer_t *indexbuffer)
 	thread_graphics->exports.gs_indexbuffer_flush(indexbuffer);
 }
 
+void   gs_indexbuffer_flush_direct(gs_indexbuffer_t *indexbuffer,
+		const void *data)
+{
+	if (!gs_valid_p2("gs_indexbuffer_flush_direct", indexbuffer, data))
+		return;
+
+	thread_graphics->exports.gs_indexbuffer_flush_direct(indexbuffer, data);
+}
+
 void  *gs_indexbuffer_get_data(const gs_indexbuffer_t *indexbuffer)
 {
 	if (!gs_valid_p("gs_indexbuffer_get_data", indexbuffer))
@@ -2481,6 +2543,18 @@ enum gs_index_type gs_indexbuffer_get_type(const gs_indexbuffer_t *indexbuffer)
 		return (enum gs_index_type)0;
 
 	return thread_graphics->exports.gs_indexbuffer_get_type(indexbuffer);
+}
+
+bool gs_nv12_available(void)
+{
+	if (!gs_valid("gs_nv12_available"))
+		return false;
+
+	if (!thread_graphics->exports.device_nv12_available)
+		return false;
+
+	return thread_graphics->exports.device_nv12_available(
+			thread_graphics->device);
 }
 
 #ifdef __APPLE__
@@ -2627,6 +2701,100 @@ gs_texture_t *gs_texture_open_shared(uint32_t handle)
 	if (graphics->exports.device_texture_open_shared)
 		return graphics->exports.device_texture_open_shared(
 				graphics->device, handle);
+	return NULL;
+}
+
+uint32_t gs_texture_get_shared_handle(gs_texture_t *tex)
+{
+	graphics_t *graphics = thread_graphics;
+	if (!gs_valid("gs_texture_get_shared_handle"))
+		return GS_INVALID_HANDLE;
+
+	if (graphics->exports.device_texture_get_shared_handle)
+		return graphics->exports.device_texture_get_shared_handle(tex);
+	return GS_INVALID_HANDLE;
+}
+
+int gs_texture_acquire_sync(gs_texture_t *tex, uint64_t key, uint32_t ms)
+{
+	graphics_t *graphics = thread_graphics;
+	if (!gs_valid("gs_texture_acquire_sync"))
+		return -1;
+
+	if (graphics->exports.device_texture_acquire_sync)
+		return graphics->exports.device_texture_acquire_sync(tex,
+				key, ms);
+	return -1;
+}
+
+int gs_texture_release_sync(gs_texture_t *tex, uint64_t key)
+{
+	graphics_t *graphics = thread_graphics;
+	if (!gs_valid("gs_texture_release_sync"))
+		return -1;
+
+	if (graphics->exports.device_texture_release_sync)
+		return graphics->exports.device_texture_release_sync(tex, key);
+	return -1;
+}
+
+bool gs_texture_create_nv12(gs_texture_t **tex_y, gs_texture_t **tex_uv,
+		uint32_t width, uint32_t height, uint32_t flags)
+{
+	graphics_t *graphics = thread_graphics;
+	bool success = false;
+
+	if (!gs_valid("gs_texture_create_nv12"))
+		return false;
+
+	if ((width & 1) == 1 || (height & 1) == 1) {
+		blog(LOG_ERROR, "NV12 textures must have dimensions "
+				"divisible by 2.");
+		return false;
+	}
+
+	if (graphics->exports.device_texture_create_nv12) {
+		success = graphics->exports.device_texture_create_nv12(
+				graphics->device, tex_y, tex_uv,
+				width, height, flags);
+		if (success)
+			return true;
+	}
+
+	*tex_y = gs_texture_create(width, height, GS_R8, 1, NULL, flags);
+	*tex_uv = gs_texture_create(width / 2, height / 2, GS_R8G8, 1, NULL,
+			flags);
+
+	if (!*tex_y || !*tex_uv) {
+		if (*tex_y)
+			gs_texture_destroy(*tex_y);
+		if (*tex_uv)
+			gs_texture_destroy(*tex_uv);
+		*tex_y = NULL;
+		*tex_uv = NULL;
+		return false;
+	}
+
+	return true;
+}
+
+gs_stagesurf_t *gs_stagesurface_create_nv12(uint32_t width, uint32_t height)
+{
+	graphics_t *graphics = thread_graphics;
+
+	if (!gs_valid("gs_stagesurface_create_nv12"))
+		return NULL;
+
+	if ((width & 1) == 1 || (height & 1) == 1) {
+		blog(LOG_ERROR, "NV12 textures must have dimensions "
+				"divisible by 2.");
+		return NULL;
+	}
+
+	if (graphics->exports.device_stagesurface_create_nv12)
+		return graphics->exports.device_stagesurface_create_nv12(
+				graphics->device, width, height);
+
 	return NULL;
 }
 

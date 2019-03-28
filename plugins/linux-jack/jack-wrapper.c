@@ -40,7 +40,6 @@ static enum speaker_layout jack_channels_to_obs_speakers(uint_fast32_t channels)
 	case 1: return SPEAKERS_MONO;
 	case 2: return SPEAKERS_STEREO;
 	case 3: return SPEAKERS_2POINT1;
-	case 4: return SPEAKERS_SURROUND;
 	case 5: return SPEAKERS_4POINT1;
 	case 6: return SPEAKERS_5POINT1;
 	/* What should we do with 7 channels? */
@@ -104,7 +103,7 @@ int_fast32_t jack_init(struct jack_data* data)
 		sizeof(jack_port_t*) * data->channels);
 	for (unsigned int i = 0; i < data->channels; ++i) {
 		char port_name[10] = {'\0'};
-		snprintf(port_name, sizeof(port_name), "in_%d", i+1);
+		snprintf(port_name, sizeof(port_name), "in_%u", i+1);
 
 		data->jack_ports[i] = jack_port_register(data->jack_client,
 			port_name, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);

@@ -7,8 +7,8 @@
 #include <obs-module.h>
 #include <util/threading.h>
 #include <util/c99defs.h>
+#include <util/apple/cfstring-utils.h>
 
-#include "mac-helpers.h"
 #include "audio-device-enum.h"
 
 #define PROPERTY_DEFAULT_DEVICE kAudioHardwarePropertyDefaultInputDevice
@@ -88,6 +88,9 @@ static bool find_device_id_by_uid(struct coreaudio_data *ca)
 
 	if (!ca->device_uid)
 		ca->device_uid = bstrdup("default");
+
+	ca->default_device = false;
+	ca->no_devices = false;
 
 	/* have to do this because mac output devices don't actually exist */
 	if (astrcmpi(ca->device_uid, "default") == 0) {
@@ -187,9 +190,15 @@ static inline enum audio_format convert_ca_format(UInt32 format_flags,
 
 static inline enum speaker_layout convert_ca_speaker_layout(UInt32 channels)
 {
-	/* directly map channel count to enum values */
-	if (channels >= 1 && channels <= 8 && channels != 7)
-		return (enum speaker_layout)channels;
+	switch (channels) {
+		case 1: return SPEAKERS_MONO;
+		case 2: return SPEAKERS_STEREO;
+		case 3: return SPEAKERS_2POINT1;
+		case 4: return SPEAKERS_4POINT0;
+		case 5: return SPEAKERS_4POINT1;
+		case 6: return SPEAKERS_5POINT1;
+		case 8: return SPEAKERS_7POINT1;
+	}
 
 	return SPEAKERS_UNKNOWN;
 }
@@ -199,6 +208,14 @@ static bool coreaudio_init_format(struct coreaudio_data *ca)
 	AudioStreamBasicDescription desc;
 	OSStatus stat;
 	UInt32 size = sizeof(desc);
+	struct obs_audio_info aoi;
+	int channels;
+
+	if (!obs_get_audio_info(&aoi)) {
+		blog(LOG_WARNING, "No active audio");
+		return false;
+	}
+	channels = get_audio_channels(aoi.speakers);
 
 	stat = get_property(ca->unit, kAudioUnitProperty_StreamFormat,
 			SCOPE_INPUT, BUS_INPUT, &desc, &size);
@@ -207,13 +224,13 @@ static bool coreaudio_init_format(struct coreaudio_data *ca)
 
 	/* Certain types of devices have no limit on channel count, and
 	 * there's no way to know the actual number of channels it's using,
-	 * so if we encounter this situation just force to stereo */
-        if (desc.mChannelsPerFrame > 8) {
-                desc.mChannelsPerFrame = 2;
-                desc.mBytesPerFrame = 2 * desc.mBitsPerChannel / 8;
-                desc.mBytesPerPacket =
-                        desc.mFramesPerPacket * desc.mBytesPerFrame;
-        }
+	 * so if we encounter this situation just force to what is defined in output */
+	if (desc.mChannelsPerFrame > 8) {
+		desc.mChannelsPerFrame = channels;
+		desc.mBytesPerFrame = channels * desc.mBitsPerChannel / 8;
+		desc.mBytesPerPacket =
+				desc.mFramesPerPacket * desc.mBytesPerFrame;
+	}
 
 	stat = set_property(ca->unit, kAudioUnitProperty_StreamFormat,
 			SCOPE_OUTPUT, BUS_INPUT, &desc, size);
@@ -479,7 +496,7 @@ static bool coreaudio_get_device_name(struct coreaudio_data *ca)
 {
 	CFStringRef cf_name = NULL;
 	UInt32 size = sizeof(CFStringRef);
-	char name[1024];
+	char *name = NULL;
 
 	const AudioObjectPropertyAddress addr = {
 		kAudioDevicePropertyDeviceNameCFString,
@@ -495,14 +512,15 @@ static bool coreaudio_get_device_name(struct coreaudio_data *ca)
 		return false;
 	}
 
-	if (!cf_to_cstr(cf_name, name, 1024)) {
+	name = cfstr_copy_cstr(cf_name, kCFStringEncodingUTF8);
+	if (!name) {
 		blog(LOG_WARNING, "[coreaudio_get_device_name] failed to "
 		                  "convert name to cstr for some reason");
 		return false;
 	}
 
 	bfree(ca->device_name);
-	ca->device_name = bstrdup(name);
+	ca->device_name = name;
 
 	if (cf_name)
 		CFRelease(cf_name);
@@ -797,7 +815,8 @@ struct obs_source_info coreaudio_output_capture_info = {
 	.id             = "coreaudio_output_capture",
 	.type           = OBS_SOURCE_TYPE_INPUT,
 	.output_flags   = OBS_SOURCE_AUDIO |
-	                  OBS_SOURCE_DO_NOT_DUPLICATE,
+	                  OBS_SOURCE_DO_NOT_DUPLICATE |
+	                  OBS_SOURCE_DO_NOT_SELF_MONITOR,
 	.get_name       = coreaudio_output_getname,
 	.create         = coreaudio_create_output_capture,
 	.destroy        = coreaudio_destroy,

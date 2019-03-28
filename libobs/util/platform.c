@@ -183,7 +183,8 @@ size_t os_fread_utf8(FILE *file, char **pstr)
 
 		/* remove the ghastly BOM if present */
 		fseek(file, 0, SEEK_SET);
-		fread(bom, 1, 3, file);
+		size_t size_read = fread(bom, 1, 3, file);
+		(void)size_read;
 
 		offset = (astrcmp_n(bom, "\xEF\xBB\xBF", 3) == 0) ? 3 : 0;
 
@@ -248,6 +249,7 @@ bool os_quick_write_mbs_file(const char *path, const char *str, size_t len)
 	if (mbs_len)
 		fwrite(mbs, 1, mbs_len, f);
 	bfree(mbs);
+	fflush(f);
 	fclose(f);
 
 	return true;
@@ -260,10 +262,20 @@ bool os_quick_write_utf8_file(const char *path, const char *str, size_t len,
 	if (!f)
 		return false;
 
-	if (marker)
-		fwrite("\xEF\xBB\xBF", 1, 3, f);
-	if (len)
-		fwrite(str, 1, len, f);
+	if (marker) {
+		if (fwrite("\xEF\xBB\xBF", 3, 1, f) != 1) {
+			fclose(f);
+			return false;
+		}
+	}
+
+	if (len) {
+		if (fwrite(str, len, 1, f) != 1) {
+			fclose(f);
+			return false;
+		}
+	}
+	fflush(f);
 	fclose(f);
 
 	return true;
@@ -289,6 +301,8 @@ bool os_quick_write_utf8_file_safe(const char *path, const char *str,
 	dstr_cat(&temp_path, temp_ext);
 
 	if (!os_quick_write_utf8_file(temp_path.array, str, len, marker)) {
+		blog(LOG_ERROR, "os_quick_write_utf8_file_safe: failed to "
+			"write to %s", temp_path.array);
 		goto cleanup;
 	}
 
@@ -297,17 +311,10 @@ bool os_quick_write_utf8_file_safe(const char *path, const char *str,
 		if (*backup_ext != '.')
 			dstr_cat(&backup_path, ".");
 		dstr_cat(&backup_path, backup_ext);
-
-		os_unlink(backup_path.array);
-		os_rename(path, backup_path.array);
-
-		dstr_free(&backup_path);
-	} else {
-		os_unlink(path);
 	}
 
-	os_rename(temp_path.array, path);
-	success = true;
+	if (os_safe_replace(path, temp_path.array, backup_path.array) == 0)
+		success = true;
 
 cleanup:
 	dstr_free(&backup_path);

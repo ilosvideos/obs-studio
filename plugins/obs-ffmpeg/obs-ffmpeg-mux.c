@@ -26,6 +26,10 @@
 #include <util/threading.h>
 #include "ffmpeg-mux/ffmpeg-mux.h"
 
+#ifdef _WIN32
+#include "util/windows/win-version.h"
+#endif
+
 #include <libavformat/avformat.h>
 
 #define do_log(level, format, ...) \
@@ -39,6 +43,7 @@ struct ffmpeg_muxer {
 	obs_output_t      *output;
 	os_process_pipe_t *pipe;
 	int64_t           stop_ts;
+	uint64_t          total_bytes;
 	struct dstr       path;
 	bool              sent_headers;
 	volatile bool     active;
@@ -145,7 +150,7 @@ static void add_video_encoder_params(struct ffmpeg_muxer *stream,
 	obs_data_release(settings);
 
 	dstr_catf(cmd, "%s %d %d %d %d %d ",
-			"h264",
+			obs_encoder_get_codec(vencoder),
 			bitrate,
 			obs_output_get_width(stream->output),
 			obs_output_get_height(stream->output),
@@ -281,10 +286,41 @@ static bool ffmpeg_mux_start(void *data)
 
 	settings = obs_output_get_settings(stream->output);
 	path = obs_data_get_string(settings, "path");
+
+	/* ensure output path is writable to avoid generic error message */
+	/* TODO: remove once ffmpeg-mux is refactored to pass errors back */
+	FILE *test_file = os_fopen(path, "wb");
+	if (!test_file) {
+		struct dstr error_message;
+		dstr_init_copy(&error_message,
+			obs_module_text("UnableToWritePath"));
+#ifdef _WIN32
+		// special warning for Windows 10 users about Defender
+		struct win_version_info ver;
+		get_win_ver(&ver);
+		if (ver.major >= 10) {
+			dstr_cat(&error_message, "\n\n");
+			dstr_cat(&error_message,
+				obs_module_text("WarnWindowsDefender"));
+		}
+#endif
+		dstr_replace(&error_message, "%1", path);
+		obs_output_set_last_error(stream->output,
+			error_message.array);
+		dstr_free(&error_message);
+		obs_data_release(settings);
+		return false;
+	}
+
+	fclose(test_file);
+	os_unlink(path);
+
 	start_pipe(stream, path);
 	obs_data_release(settings);
 
 	if (!stream->pipe) {
+		obs_output_set_last_error(stream->output,
+			obs_module_text("HelperProcessFailed"));
 		warn("Failed to create process pipe");
 		return false;
 	}
@@ -292,6 +328,7 @@ static bool ffmpeg_mux_start(void *data)
 	/* write headers and start capture */
 	os_atomic_set_bool(&stream->active, true);
 	os_atomic_set_bool(&stream->capturing, true);
+	stream->total_bytes = 0;
 	obs_output_begin_data_capture(stream->output, 0);
 
 	info("Writing file '%s'...", stream->path.array);
@@ -374,6 +411,7 @@ static bool write_packet(struct ffmpeg_muxer *stream,
 		return false;
 	}
 
+	stream->total_bytes += packet->size;
 	return true;
 }
 
@@ -460,6 +498,12 @@ static obs_properties_t *ffmpeg_mux_properties(void *unused)
 	return props;
 }
 
+static uint64_t ffmpeg_mux_total_bytes(void *data)
+{
+	struct ffmpeg_muxer *stream = data;
+	return stream->total_bytes;
+}
+
 struct obs_output_info ffmpeg_muxer = {
 	.id             = "ffmpeg_muxer",
 	.flags          = OBS_OUTPUT_AV |
@@ -471,6 +515,7 @@ struct obs_output_info ffmpeg_muxer = {
 	.start          = ffmpeg_mux_start,
 	.stop           = ffmpeg_mux_stop,
 	.encoded_packet = ffmpeg_mux_data,
+	.get_total_bytes= ffmpeg_mux_total_bytes,
 	.get_properties = ffmpeg_mux_properties
 };
 
@@ -482,17 +527,34 @@ static const char *replay_buffer_getname(void *type)
 	return obs_module_text("ReplayBuffer");
 }
 
-static bool replay_buffer_hotkey(void *data, obs_hotkey_id id,
+static void replay_buffer_hotkey(void *data, obs_hotkey_id id,
 		obs_hotkey_t *hotkey, bool pressed)
 {
+	UNUSED_PARAMETER(id);
+	UNUSED_PARAMETER(hotkey);
+	UNUSED_PARAMETER(pressed);
+
 	struct ffmpeg_muxer *stream = data;
 	if (os_atomic_load_bool(&stream->active))
 		stream->save_ts = os_gettime_ns() / 1000LL;
-	return true;
+}
+
+static void save_replay_proc(void *data, calldata_t *cd)
+{
+	replay_buffer_hotkey(data, 0, NULL, true);
+	UNUSED_PARAMETER(cd);
+}
+
+static void get_last_replay(void *data, calldata_t *cd)
+{
+	struct ffmpeg_muxer *stream = data;
+	if (!os_atomic_load_bool(&stream->muxing))
+		calldata_set_string(cd, "path", stream->path.array);
 }
 
 static void *replay_buffer_create(obs_data_t *settings, obs_output_t *output)
 {
+	UNUSED_PARAMETER(settings);
 	struct ffmpeg_muxer *stream = bzalloc(sizeof(*stream));
 	stream->output = output;
 
@@ -501,7 +563,11 @@ static void *replay_buffer_create(obs_data_t *settings, obs_output_t *output)
 			obs_module_text("ReplayBuffer.Save"),
 			replay_buffer_hotkey, stream);
 
-	UNUSED_PARAMETER(settings);
+	proc_handler_t *ph = obs_output_get_proc_handler(output);
+	proc_handler_add(ph, "void save()", save_replay_proc, stream);
+	proc_handler_add(ph, "void get_last_replay(out string path)",
+			get_last_replay, stream);
+
 	return stream;
 }
 
@@ -529,6 +595,7 @@ static bool replay_buffer_start(void *data)
 
 	os_atomic_set_bool(&stream->active, true);
 	os_atomic_set_bool(&stream->capturing, true);
+	stream->total_bytes = 0;
 	obs_output_begin_data_capture(stream->output, 0);
 
 	return true;
@@ -798,5 +865,6 @@ struct obs_output_info replay_buffer = {
 	.start          = replay_buffer_start,
 	.stop           = ffmpeg_mux_stop,
 	.encoded_packet = replay_buffer_data,
+	.get_total_bytes= ffmpeg_mux_total_bytes,
 	.get_defaults   = replay_buffer_defaults
 };

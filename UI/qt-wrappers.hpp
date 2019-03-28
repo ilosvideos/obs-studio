@@ -17,9 +17,13 @@
 
 #pragma once
 
+#include <QApplication>
+#include <QMessageBox>
 #include <QWidget>
+#include <QThread>
 #include <obs.hpp>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -29,7 +33,22 @@
 class QDataStream;
 class QWidget;
 class QLayout;
+class QString;
 struct gs_window;
+
+class OBSMessageBox {
+public:
+	static QMessageBox::StandardButton question(
+			QWidget *parent,
+			const QString &title,
+			const QString &text,
+			QMessageBox::StandardButtons buttons = QMessageBox::StandardButtons( QMessageBox::Yes | QMessageBox::No ),
+			QMessageBox::StandardButton defaultButton = QMessageBox::NoButton);
+	static void information(
+			QWidget *parent,
+			const QString &title,
+			const QString &text);
+};
 
 void OBSErrorBox(QWidget *parent, const char *msg, ...);
 
@@ -45,6 +64,22 @@ QDataStream &operator<<(QDataStream &out, const OBSScene &scene);
 QDataStream &operator>>(QDataStream &in, OBSScene &scene);
 QDataStream &operator<<(QDataStream &out, const OBSSceneItem &si);
 QDataStream &operator>>(QDataStream &in, OBSSceneItem &si);
+
+QThread *CreateQThread(std::function<void()> func);
+
+void ExecuteFuncSafeBlock(std::function<void()> func);
+void ExecuteFuncSafeBlockMsgBox(
+		std::function<void()> func,
+		const QString &title,
+		const QString &text);
+
+/* allows executing without message boxes if starting up, otherwise with a
+ * message box */
+void EnableThreadedMessageBoxes(bool enable);
+void ExecThreadedWithoutBlocking(
+		std::function<void()> func,
+		const QString &title,
+		const QString &text);
 
 class SignalBlocker {
 	QWidget *widget;
@@ -63,3 +98,10 @@ public:
 };
 
 void DeleteLayout(QLayout *layout);
+
+static inline Qt::ConnectionType WaitConnection()
+{
+	return QThread::currentThread() == qApp->thread()
+		? Qt::DirectConnection
+		: Qt::BlockingQueuedConnection;
+}

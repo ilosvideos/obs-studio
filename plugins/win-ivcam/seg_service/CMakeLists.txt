@@ -28,13 +28,12 @@ set(seg_service_SOURCES
 	seg_service.cpp
 	SegProc.cpp
 	stdafx.cpp
-	xdlldata.c
 	seg_service.rc
 	${seg_service_GENERATED_FILES}
 	)
 
 if(MSVC)
-	add_compile_options("$<$<CONFIG:RelWithDebInfo>:/MT>")
+	add_compile_options($<IF:$<CONFIG:Debug>,/MTd,/MT>)
 endif()
 
 add_executable(seg_service WIN32

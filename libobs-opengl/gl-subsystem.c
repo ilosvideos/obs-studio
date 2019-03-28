@@ -207,15 +207,31 @@ int device_create(gs_device_t **p_device, uint32_t adapter)
 	struct gs_device *device = bzalloc(sizeof(struct gs_device));
 	int errorcode = GS_ERROR_FAIL;
 
+	blog(LOG_INFO, "---------------------------------");
+	blog(LOG_INFO, "Initializing OpenGL...");
+
 	device->plat = gl_platform_create(device, adapter);
 	if (!device->plat)
 		goto fail;
+
+	const char *glVendor = (const char *)glGetString(GL_VENDOR);
+	const char *glRenderer = (const char *)glGetString(GL_RENDERER);
+
+	blog(LOG_INFO, "Loading up OpenGL on adapter %s %s", glVendor,
+			glRenderer);
 
 	if (!gl_init_extensions(device)) {
 		errorcode = GS_ERROR_NOT_SUPPORTED;
 		goto fail;
 	}
-	
+
+	const char *glVersion = (const char *)glGetString(GL_VERSION);
+	const char *glShadingLanguage = (const char *)glGetString(
+			GL_SHADING_LANGUAGE_VERSION);
+
+	blog(LOG_INFO, "OpenGL loaded successfully, version %s, shading "
+			"language %s", glVersion, glShadingLanguage);
+
 	gl_enable(GL_CULL_FACE);
 	
 	device_leave_context(device);
@@ -243,16 +259,10 @@ fail:
 void device_destroy(gs_device_t *device)
 {
 	if (device) {
-		size_t i;
-
-		for (i = 0; i < device->fbos.num; i++)
-			fbo_info_destroy(device->fbos.array[i]);
-
 		while (device->first_program)
 			gs_program_destroy(device->first_program);
 
 		da_free(device->proj_stack);
-		da_free(device->fbos);
 		gl_platform_destroy(device->plat);
 		bfree(device);
 	}
@@ -455,7 +465,7 @@ void device_load_texture(gs_device_t *device, gs_texture_t *tex, int unit)
 
 	/* need a pixel shader to properly bind textures */
 	if (!device->cur_pixel_shader)
-		tex = NULL;
+		goto fail;
 
 	if (cur_tex == tex)
 		return;
@@ -642,46 +652,37 @@ static bool get_tex_dimensions(gs_texture_t *tex, uint32_t *width,
  * This automatically manages FBOs so that render targets are always given
  * an FBO that matches their width/height/format to maximize optimization
  */
-struct fbo_info *get_fbo(struct gs_device *device,
-		uint32_t width, uint32_t height, enum gs_color_format format)
+struct fbo_info *get_fbo(gs_texture_t *tex, uint32_t width, uint32_t height)
 {
-	size_t i;
+	if (tex->fbo && tex->fbo->width  == width &&
+			tex->fbo->height == height &&
+			tex->fbo->format == tex->format)
+		return tex->fbo;
+
 	GLuint fbo;
-	struct fbo_info *ptr;
-
-	for (i = 0; i < device->fbos.num; i++) {
-		ptr = device->fbos.array[i];
-
-		if (ptr->width  == width && ptr->height == height &&
-		    ptr->format == format)
-			return ptr;
-	}
-
 	glGenFramebuffers(1, &fbo);
 	if (!gl_success("glGenFramebuffers"))
 		return NULL;
 
-	ptr = bmalloc(sizeof(struct fbo_info));
-	ptr->fbo                 = fbo;
-	ptr->width               = width;
-	ptr->height              = height;
-	ptr->format              = format;
-	ptr->cur_render_target   = NULL;
-	ptr->cur_render_side     = 0;
-	ptr->cur_zstencil_buffer = NULL;
+	tex->fbo = bmalloc(sizeof(struct fbo_info));
+	tex->fbo->fbo                 = fbo;
+	tex->fbo->width               = width;
+	tex->fbo->height              = height;
+	tex->fbo->format              = tex->format;
+	tex->fbo->cur_render_target   = NULL;
+	tex->fbo->cur_render_side     = 0;
+	tex->fbo->cur_zstencil_buffer = NULL;
 
-	da_push_back(device->fbos, &ptr);
-	return ptr;
+	return tex->fbo;
 }
 
-static inline struct fbo_info *get_fbo_by_tex(struct gs_device *device,
-		gs_texture_t *tex)
+static inline struct fbo_info *get_fbo_by_tex(gs_texture_t *tex)
 {
 	uint32_t width, height;
 	if (!get_tex_dimensions(tex, &width, &height))
 		return NULL;
 
-	return get_fbo(device, width, height, tex->format);
+	return get_fbo(tex, width, height);
 }
 
 static bool set_current_fbo(gs_device_t *device, struct fbo_info *fbo)
@@ -767,7 +768,7 @@ static bool set_target(gs_device_t *device, gs_texture_t *tex, int side,
 	if (!tex)
 		return set_current_fbo(device, NULL);
 
-	fbo = get_fbo_by_tex(device, tex);
+	fbo = get_fbo_by_tex(tex);
 	if (!fbo)
 		return false;
 
@@ -869,9 +870,8 @@ void device_copy_texture_region(gs_device_t *device,
 		goto fail;
 	}
 
-	if (!gl_copy_texture(device, dst->texture, dst->gl_target, dst_x, dst_y,
-				src->texture, src->gl_target, src_x, src_y,
-				nw, nh, src->format))
+	if (!gl_copy_texture(device, dst, dst_x, dst_y, src, src_x, src_y, nw,
+			nh))
 		goto fail;
 
 	return;
@@ -1227,17 +1227,21 @@ static inline uint32_t get_target_height(const struct gs_device *device)
 void device_set_viewport(gs_device_t *device, int x, int y, int width,
 		int height)
 {
-	uint32_t base_height;
+	uint32_t base_height = 0;
+	int gl_y = 0;
 
 	/* GL uses bottom-up coordinates for viewports.  We want top-down */
 	if (device->cur_render_target) {
 		base_height = get_target_height(device);
-	} else {
+	} else if (device->cur_swap) {
 		uint32_t dw;
 		gl_getclientsize(device->cur_swap, &dw, &base_height);
 	}
 
-	glViewport(x, base_height - y - height, width, height);
+	if (base_height)
+		gl_y = base_height - y - height;
+
+	glViewport(x, gl_y, width, height);
 	if (!gl_success("glViewport"))
 		blog(LOG_ERROR, "device_set_viewport (GL) failed");
 

@@ -16,6 +16,8 @@
 ******************************************************************************/
 
 #include "qt-wrappers.hpp"
+#include "obs-app.hpp"
+
 #include <graphics/graphics.h>
 #include <QWidget>
 #include <QLayout>
@@ -40,6 +42,51 @@ void OBSErrorBox(QWidget *parent, const char *msg, ...)
 	va_start(args, msg);
 	OBSErrorBoxva(parent, msg, args);
 	va_end(args);
+}
+
+QMessageBox::StandardButton OBSMessageBox::question(
+		QWidget *parent,
+		const QString &title,
+		const QString &text,
+		QMessageBox::StandardButtons buttons,
+		QMessageBox::StandardButton defaultButton)
+{
+	QMessageBox mb(QMessageBox::Question,
+			title, text, buttons,
+			parent);
+	mb.setDefaultButton(defaultButton);
+	if (buttons & QMessageBox::Ok) \
+		mb.setButtonText(QMessageBox::Ok, QTStr("OK"));
+#define translate_button(x) \
+	if (buttons & QMessageBox::x) \
+		mb.setButtonText(QMessageBox::x, QTStr(#x));
+	translate_button(Open);
+	translate_button(Save);
+	translate_button(Cancel);
+	translate_button(Close);
+	translate_button(Discard);
+	translate_button(Apply);
+	translate_button(Reset);
+	translate_button(Yes);
+	translate_button(No);
+	translate_button(No);
+	translate_button(Abort);
+	translate_button(Retry);
+	translate_button(Ignore);
+#undef translate_button
+	return (QMessageBox::StandardButton)mb.exec();
+}
+
+void OBSMessageBox::information(
+		QWidget *parent,
+		const QString &title,
+		const QString &text)
+{
+	QMessageBox mb(QMessageBox::Information,
+			title, text, QMessageBox::Ok,
+			parent);
+	mb.setButtonText(QMessageBox::Ok, QTStr("OK"));
+	mb.exec();
 }
 
 void QTToGSWindow(WId windowId, gs_window &gswindow)
@@ -155,4 +202,82 @@ void DeleteLayout(QLayout *layout)
 	}
 
 	delete layout;
+}
+
+class QuickThread : public QThread {
+public:
+	explicit inline QuickThread(std::function<void()> func_)
+		: func(func_)
+	{}
+
+private:
+	virtual void run() override
+	{
+		func();
+	}
+
+	std::function<void()> func;
+};
+
+QThread *CreateQThread(std::function<void()> func)
+{
+	return new QuickThread(func);
+}
+
+void ExecuteFuncSafeBlock(std::function<void()> func)
+{
+	QEventLoop eventLoop;
+
+	auto wait = [&] ()
+	{
+		func();
+		QMetaObject::invokeMethod(&eventLoop, "quit",
+				Qt::QueuedConnection);
+	};
+
+	QScopedPointer<QThread> thread(CreateQThread(wait));
+	thread->start();
+	eventLoop.exec();
+	thread->wait();
+}
+
+void ExecuteFuncSafeBlockMsgBox(
+		std::function<void()> func,
+		const QString &title,
+		const QString &text)
+{
+	QMessageBox dlg;
+	dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowCloseButtonHint);
+	dlg.setWindowTitle(title);
+	dlg.setText(text);
+	dlg.setStandardButtons(0);
+
+	auto wait = [&] ()
+	{
+		func();
+		QMetaObject::invokeMethod(&dlg, "accept", Qt::QueuedConnection);
+	};
+
+	QScopedPointer<QThread> thread(CreateQThread(wait));
+	thread->start();
+	dlg.exec();
+	thread->wait();
+}
+
+static bool enable_message_boxes = false;
+
+void EnableThreadedMessageBoxes(bool enable)
+{
+	enable_message_boxes = enable;
+}
+
+void ExecThreadedWithoutBlocking(
+		std::function<void()> func,
+		const QString &title,
+		const QString &text)
+{
+	if (!enable_message_boxes)
+		ExecuteFuncSafeBlock(func);
+	else
+		ExecuteFuncSafeBlockMsgBox(func, title, text);
 }

@@ -26,6 +26,8 @@ struct window_capture {
 	struct dc_capture    capture;
 
 	float                resize_timer;
+	float                check_window_timer;
+	float                cursor_check_time;
 
 	HWND                 window;
 	RECT                 last_rect;
@@ -41,6 +43,14 @@ static void update_settings(struct window_capture *wc, obs_data_t *s)
 	bfree(wc->executable);
 
 	build_window_strings(window, &wc->class, &wc->title, &wc->executable);
+
+	if (wc->title != NULL) {
+		blog(LOG_INFO, "[window-capture: '%s'] update settings:\n"
+				"\texecutable: %s",
+				obs_source_get_name(wc->source),
+				wc->executable);
+		blog(LOG_DEBUG, "\tclass:      %s", wc->class);
+	}
 
 	wc->priority      = (enum window_priority)priority;
 	wc->cursor        = obs_data_get_bool(s, "cursor");
@@ -134,6 +144,7 @@ static obs_properties_t *wc_properties(void *unused)
 }
 
 #define RESIZE_CHECK_TIME 0.2f
+#define CURSOR_CHECK_TIME 0.2f
 
 static void wc_tick(void *data, float seconds)
 {
@@ -148,6 +159,16 @@ static void wc_tick(void *data, float seconds)
 		if (!wc->title && !wc->class)
 			return;
 
+		wc->check_window_timer += seconds;
+
+		if (wc->check_window_timer < 1.0f) {
+			if (wc->capture.valid)
+				dc_capture_free(&wc->capture);
+			return;
+		}
+
+		wc->check_window_timer = 0.0f;
+
 		wc->window = find_window(EXCLUDE_MINIMIZED, wc->priority,
 				wc->class, wc->title, wc->executable);
 		if (!wc->window) {
@@ -160,6 +181,25 @@ static void wc_tick(void *data, float seconds)
 
 	} else if (IsIconic(wc->window)) {
 		return;
+	}
+
+	wc->cursor_check_time += seconds;
+	if (wc->cursor_check_time > CURSOR_CHECK_TIME) {
+		DWORD foreground_pid, target_pid;
+
+		// Can't just compare the window handle in case of app with child windows
+		if (!GetWindowThreadProcessId(GetForegroundWindow(), &foreground_pid))
+			foreground_pid = 0;
+
+		if (!GetWindowThreadProcessId(wc->window, &target_pid))
+			target_pid = 0;
+
+		if (foreground_pid && target_pid && foreground_pid != target_pid)
+			wc->capture.cursor_hidden = true;
+		else
+			wc->capture.cursor_hidden = false;
+
+		wc->cursor_check_time = 0.0f;
 	}
 
 	obs_enter_graphics();

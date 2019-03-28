@@ -8,7 +8,7 @@ if(COPIED_DEPENDENCIES)
 	return()
 endif()
 
-option(COPY_DEPENDENCIES "Automaticaly try copying all dependencies" OFF)
+option(COPY_DEPENDENCIES "Automaticaly try copying all dependencies" ON)
 if(NOT COPY_DEPENDENCIES)
 	return()
 endif()
@@ -18,12 +18,6 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 8)
 else()
 	set(_bin_suffix 32)
 endif()
-
-find_package(Libavcodec QUIET)
-find_package(Libx264 QUIET)
-find_package(Libfdk QUIET)
-find_package(ssl QUIET)
-find_package(Qt5Core QUIET)
 
 file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe"
@@ -110,6 +104,16 @@ file(GLOB CURL_BIN_FILES
 	"${CURL_INCLUDE_DIR}/bin/curl*.dll"
 	)
 
+file(GLOB LUA_BIN_FILES
+	"${LUAJIT_INCLUDE_DIR}/../../bin${_bin_suffix}/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/../../bin/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/../bin${_bin_suffix}/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/../bin/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/bin${_bin_suffix}/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/bin/lua*.dll"
+	"${LUAJIT_INCLUDE_DIR}/lua*.dll"
+	)
+
 if (ZLIB_LIB)
 	GET_FILENAME_COMPONENT(ZLIB_BIN_PATH ${ZLIB_LIB} PATH)
 endif()
@@ -125,27 +129,27 @@ if (NOT ZLIB_BIN_FILES)
 		)
 endif()
 
-if (CMAKE_CONFIGURATION_TYPES MATCHES "Debug")
-	file(GLOB QT_DEBUG_BIN_FILES
-		"${Qt5Core_DIR}/../../../bin/Qt5Cored.dll"
-		"${Qt5Core_DIR}/../../../bin/Qt5Guid.dll"
-		"${Qt5Core_DIR}/../../../bin/Qt5Widgetsd.dll"
-		"${Qt5Core_DIR}/../../../bin/libGLESv2d.dll"
-		"${Qt5Core_DIR}/../../../bin/libEGLd.dll")
-	file(GLOB QT_DEBUG_PLAT_BIN_FILES
-		"${Qt5Core_DIR}/../../../plugins/platforms/qwindowsd.dll")
-endif()
+file(GLOB QT_DEBUG_BIN_FILES
+	"${Qt5Core_DIR}/../../../bin/Qt5Cored.dll"
+	"${Qt5Core_DIR}/../../../bin/Qt5Guid.dll"
+	"${Qt5Core_DIR}/../../../bin/Qt5Widgetsd.dll"
+	"${Qt5Core_DIR}/../../../bin/libGLESv2d.dll"
+	"${Qt5Core_DIR}/../../../bin/libEGLd.dll")
+file(GLOB QT_DEBUG_PLAT_BIN_FILES
+	"${Qt5Core_DIR}/../../../plugins/platforms/qwindowsd.dll")
+file(GLOB QT_DEBUG_STYLES_BIN_FILES
+	"${Qt5Core_DIR}/../../../plugins/styles/qwindowsvistastyled.dll")
 
-if (CMAKE_CONFIGURATION_TYPES MATCHES "Rel")
-	file(GLOB QT_BIN_FILES
-		"${Qt5Core_DIR}/../../../bin/Qt5Core.dll"
-		"${Qt5Core_DIR}/../../../bin/Qt5Gui.dll"
-		"${Qt5Core_DIR}/../../../bin/Qt5Widgets.dll"
-		"${Qt5Core_DIR}/../../../bin/libGLESv2.dll"
-		"${Qt5Core_DIR}/../../../bin/libEGL.dll")
-	file(GLOB QT_PLAT_BIN_FILES
-		"${Qt5Core_DIR}/../../../plugins/platforms/qwindows.dll")
-endif()
+file(GLOB QT_BIN_FILES
+	"${Qt5Core_DIR}/../../../bin/Qt5Core.dll"
+	"${Qt5Core_DIR}/../../../bin/Qt5Gui.dll"
+	"${Qt5Core_DIR}/../../../bin/Qt5Widgets.dll"
+	"${Qt5Core_DIR}/../../../bin/libGLESv2.dll"
+	"${Qt5Core_DIR}/../../../bin/libEGL.dll")
+file(GLOB QT_PLAT_BIN_FILES
+	"${Qt5Core_DIR}/../../../plugins/platforms/qwindows.dll")
+file(GLOB QT_STYLES_BIN_FILES
+	"${Qt5Core_DIR}/../../../plugins/styles/qwindowsvistastyle.dll")
 
 file(GLOB QT_ICU_BIN_FILES
 	"${Qt5Core_DIR}/../../../bin/icu*.dll")
@@ -154,6 +158,7 @@ set(ALL_BASE_BIN_FILES
 	${FFMPEG_BIN_FILES}
 	${X264_BIN_FILES}
 	${CURL_BIN_FILES}
+	${LUA_BIN_FILES}
 	${SSL_BIN_FILES}
 	${ZLIB_BIN_FILES}
 	${LIBFDK_BIN_FILES}
@@ -167,16 +172,21 @@ set(ALL_DBG_BIN_FILES
 	${QT_DEBUG_BIN_FILES})
 
 set(ALL_PLATFORM_BIN_FILES)
-
 set(ALL_PLATFORM_REL_BIN_FILES
 	${QT_PLAT_BIN_FILES})
-
 set(ALL_PLATFORM_DBG_BIN_FILES
 	${QT_DEBUG_PLAT_BIN_FILES})
 
+set(ALL_STYLES_BIN_FILES)
+set(ALL_STYLES_REL_BIN_FILES
+	${QT_STYLES_BIN_FILES})
+set(ALL_STYLES_DBG_BIN_FILES
+	${QT_DEBUG_STYLES_BIN_FILES})
+
 foreach(list
 		ALL_BASE_BIN_FILES ALL_REL_BIN_FILES ALL_DBG_BIN_FILES
-		ALL_PLATFORM_BIN_FILES ALL_PLATFORM_REL_BIN_FILES ALL_PLATFORM_DBG_BIN_FILES)
+		ALL_PLATFORM_BIN_FILES ALL_PLATFORM_REL_BIN_FILES ALL_PLATFORM_DBG_BIN_FILES
+		ALL_STYLES_BIN_FILES ALL_STYLES_REL_BIN_FILES ALL_STYLES_DBG_BIN_FILES)
 	if(${list})
 		list(REMOVE_DUPLICATES ${list})
 	endif()
@@ -187,12 +197,15 @@ message(STATUS "x264 files: ${X264_BIN_FILES}")
 message(STATUS "Libfdk files: ${LIBFDK_BIN_FILES}")
 message(STATUS "Freetype files: ${FREETYPE_BIN_FILES}")
 message(STATUS "curl files: ${CURL_BIN_FILES}")
+message(STATUS "lua files: ${LUA_BIN_FILES}")
 message(STATUS "ssl files: ${SSL_BIN_FILES}")
 message(STATUS "zlib files: ${ZLIB_BIN_FILES}")
 message(STATUS "QT Debug files: ${QT_DEBUG_BIN_FILES}")
 message(STATUS "QT Debug Platform files: ${QT_DEBUG_PLAT_BIN_FILES}")
+message(STATUS "QT Debug Styles files: ${QT_DEBUG_STYLES_BIN_FILES}")
 message(STATUS "QT Release files: ${QT_BIN_FILES}")
 message(STATUS "QT Release Platform files: ${QT_PLAT_BIN_FILES}")
+message(STATUS "QT Release Styles files: ${QT_STYLES_BIN_FILES}")
 message(STATUS "QT ICU files: ${QT_ICU_BIN_FILES}")
 
 foreach(BinFile ${ALL_BASE_BIN_FILES})
@@ -223,6 +236,21 @@ endforeach()
 foreach(BinFile ${ALL_PLATFORM_DBG_BIN_FILES})
 	make_directory("${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}d/platforms")
 	file(COPY "${BinFile}" DESTINATION "${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}d/platforms/")
+endforeach()
+
+foreach(BinFile ${ALL_STYLES_BIN_FILES})
+	make_directory("${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}/styles")
+	file(COPY "${BinFile}" DESTINATION "${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}/styles/")
+endforeach()
+
+foreach(BinFile ${ALL_STYLES_REL_BIN_FILES})
+	make_directory("${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}r/styles")
+	file(COPY "${BinFile}" DESTINATION "${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}r/styles/")
+endforeach()
+
+foreach(BinFile ${ALL_STYLES_DBG_BIN_FILES})
+	make_directory("${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}d/styles")
+	file(COPY "${BinFile}" DESTINATION "${CMAKE_SOURCE_DIR}/additional_install_files/exec${_bin_suffix}d/styles/")
 endforeach()
 
 set(COPIED_DEPENDENCIES TRUE CACHE BOOL "Dependencies have been copied, set to false to copy again" FORCE)

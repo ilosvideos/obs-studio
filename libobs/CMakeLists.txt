@@ -12,24 +12,50 @@ if (NOT "${FFMPEG_AVCODEC_LIBRARIES}" STREQUAL "")
 endif()
 
 if(UNIX)
-	find_package(DBus QUIET)
 	if (NOT APPLE)
 		find_package(X11_XCB REQUIRED)
+		find_package(XCB OPTIONAL_COMPONENTS XINPUT)
+		if (XCB_XINPUT_FOUND)
+			set(USE_XINPUT "1")
+		else()
+			set(USE_XINPUT "0")
+		endif()
+		find_package(PulseAudio)
+		if (NOT "${PULSEAUDIO_LIBRARY}" STREQUAL "")
+			message(STATUS "Found PulseAudio - Audio Monitor enabled")
+			set(HAVE_PULSEAUDIO "1")
+		else()
+			set(HAVE_PULSEAUDIO "0")
+		endif()
+	else()
+		set(HAVE_PULSEAUDIO "0")
+		set(USE_XINPUT "0")
 	endif()
+	find_package(DBus QUIET)
 else()
 	set(HAVE_DBUS "0")
+	set(HAVE_PULSEAUDIO "0")
+	set(USE_XINPUT "0")
 endif()
 
 find_package(ImageMagick QUIET COMPONENTS MagickCore)
 
 if(NOT ImageMagick_MagickCore_FOUND AND NOT FFMPEG_AVCODEC_FOUND)
-	message(FATAL_ERROR "Either MagickCore or Libavcodec is required, but both were not found")
+	message(FATAL_ERROR "Either MagickCore or Libavcodec is required, but neither were found.")
+elseif(NOT ImageMagick_MagickCore_FOUND AND LIBOBS_PREFER_IMAGEMAGICK)
+	message(FATAL_ERROR "ImageMagick support was requested, but was not found.")
 endif()
 
 option(LIBOBS_PREFER_IMAGEMAGICK "Prefer ImageMagick over ffmpeg for image loading" OFF)
 
 if(NOT FFMPEG_AVCODEC_FOUND OR (ImageMagick_MagickCore_FOUND AND LIBOBS_PREFER_IMAGEMAGICK))
 	message(STATUS "Using ImageMagick for image loading in libobs")
+
+	if(${ImageMagick_VERSION_STRING} LESS 7)
+		set(LIBOBS_IMAGEMAGICK_DIR_STYLE LIBOBS_IMAGEMAGICK_DIR_STYLE_6L)
+	elseif(${ImageMagick_VERSION_STRING} GREATER_EQUAL 7)
+		set(LIBOBS_IMAGEMAGICK_DIR_STYLE LIBOBS_IMAGEMAGICK_DIR_STYLE_7GE)
+	endif()
 
 	set(libobs_image_loading_SOURCES
 		graphics/graphics-magick.c)
@@ -63,12 +89,20 @@ if(WIN32)
 		util/platform-windows.c)
 	set(libobs_PLATFORM_HEADERS
 		util/threading-windows.h
+		util/windows/win-registry.h
 		util/windows/win-version.h
 		util/windows/ComPtr.hpp
 		util/windows/CoTaskMemPtr.hpp
 		util/windows/HRError.hpp
 		util/windows/WinHandle.hpp)
-	set(libobs_PLATFORM_DEPS winmm)
+	set(libobs_audio_monitoring_SOURCES
+		audio-monitoring/win32/wasapi-output.c
+		audio-monitoring/win32/wasapi-enum-devices.c
+		)
+	set(libobs_audio_monitoring_HEADERS
+		audio-monitoring/win32/wasapi-output.h
+		)
+	set(libobs_PLATFORM_DEPS winmm psapi)
 	if(MSVC)
 		set(libobs_PLATFORM_DEPS
 		${libobs_PLATFORM_DEPS}
@@ -82,7 +116,15 @@ elseif(APPLE)
 		util/platform-nix.c
 		util/platform-cocoa.m)
 	set(libobs_PLATFORM_HEADERS
-		util/threading-posix.h)
+		util/threading-posix.h
+		util/apple/cfstring-utils.h)
+	set(libobs_audio_monitoring_SOURCES
+		audio-monitoring/osx/coreaudio-enum-devices.c
+		audio-monitoring/osx/coreaudio-output.c
+		)
+	set(libobs_audio_monitoring_HEADERS
+		audio-monitoring/osx/mac-helpers.h
+		)
 
 	set_source_files_properties(${libobs_PLATFORM_SOURCES}
 		PROPERTIES
@@ -92,6 +134,18 @@ elseif(APPLE)
 	find_library(COCOA Cocoa)
 	mark_as_advanced(COCOA)
 	include_directories(${COCOA})
+
+	find_library(COREAUDIO CoreAudio)
+	mark_as_advanced(COREAUDIO)
+	include_directories(${COREAUDIO})
+
+	find_library(AUDIOTOOLBOX AudioToolbox)
+	mark_as_advanced(AUDIOTOOLBOX)
+	include_directories(${AUDIOTOOLBOX})
+
+	find_library(AUDIOUNIT AudioUnit)
+	mark_as_advanced(AUDIOUNIT)
+	include_directories(${AUDIOUNIT})
 
 	find_library(APPKIT AppKit)
 	mark_as_advanced(APPKIT)
@@ -107,6 +161,9 @@ elseif(APPLE)
 
 	set(libobs_PLATFORM_DEPS
 		${COCOA}
+		${COREAUDIO}
+		${AUDIOUNIT}
+		${AUDIOTOOLBOX}
 		${APPKIT}
 		${IOKIT}
 		${CARBON})
@@ -116,9 +173,22 @@ elseif(UNIX)
 		util/threading-posix.c
 		util/pipe-posix.c
 		util/platform-nix.c)
+
 	set(libobs_PLATFORM_HEADERS
 		util/threading-posix.h)
 
+	if(HAVE_PULSEAUDIO)
+		set(libobs_audio_monitoring_HEADERS
+			audio-monitoring/pulse/pulseaudio-wrapper.h)
+
+		set(libobs_audio_monitoring_SOURCES
+			audio-monitoring/pulse/pulseaudio-wrapper.c
+			audio-monitoring/pulse/pulseaudio-enum-devices.c
+			audio-monitoring/pulse/pulseaudio-output.c)
+	else()
+		set(libobs_audio_monitoring_SOURCES
+			audio-monitoring/null/null-audio-monitoring.c)
+	endif()
 	if(DBUS_FOUND)
 		set(libobs_PLATFORM_SOURCES ${libobs_PLATFORM_SOURCES}
 			util/platform-nix-dbus.c)
@@ -135,6 +205,22 @@ elseif(UNIX)
 	set(libobs_PLATFORM_DEPS
 		${libobs_PLATFORM_DEPS}
 		${X11_XCB_LIBRARIES})
+
+	if(USE_XINPUT)
+		include_directories(
+			${XCB_XINPUT_INCLUDE_DIR})
+		add_definitions(
+			${XCB_DEFINITIONS})
+		set(libobs_PLATFORM_DEPS
+			${XCB_XINPUT_LIBRARY}
+			${libobs_PLATFORM_DEPS})
+	endif()
+
+	if(HAVE_PULSEAUDIO)
+		set(libobs_PLATFORM_DEPS
+			${libobs_PLATFORM_DEPS}
+			${PULSEAUDIO_LIBRARY})
+	endif()
 
 	if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 		# use the sysinfo compatibility library on bsd
@@ -301,6 +387,7 @@ set(libobs_libobs_SOURCES
 	obs-view.c
 	obs-scene.c
 	obs-audio.c
+	obs-video-gpu-encode.c
 	obs-video.c)
 set(libobs_libobs_HEADERS
 	${libobs_PLATFORM_HEADERS}
@@ -329,7 +416,9 @@ set(libobs_SOURCES
 	${libobs_graphics_SOURCES}
 	${libobs_mediaio_SOURCES}
 	${libobs_util_SOURCES}
-	${libobs_libobs_SOURCES})
+	${libobs_libobs_SOURCES}
+	${libobs_audio_monitoring_SOURCES}
+	)
 
 set(libobs_HEADERS
 	${libobs_config_HEADERS}
@@ -337,7 +426,9 @@ set(libobs_HEADERS
 	${libobs_graphics_HEADERS}
 	${libobs_mediaio_HEADERS}
 	${libobs_util_HEADERS}
-	${libobs_libobs_HEADERS})
+	${libobs_libobs_HEADERS}
+	${libobs_audio_monitoring_HEADERS}
+	)
 
 source_group("callback\\Source Files" FILES ${libobs_callback_SOURCES})
 source_group("callback\\Header Files" FILES ${libobs_callback_HEADERS})
@@ -349,6 +440,8 @@ source_group("media-io\\Source Files" FILES ${libobs_mediaio_SOURCES})
 source_group("media-io\\Header Files" FILES ${libobs_mediaio_HEADERS})
 source_group("util\\Source Files" FILES ${libobs_util_SOURCES})
 source_group("util\\Header Files" FILES ${libobs_util_HEADERS})
+source_group("audio-monitoring\\Source Files" FILES ${libobs_audio_monitoring_SOURCES})
+source_group("audio-monitoring\\Header Files" FILES ${libobs_audio_monitoring_HEADERS})
 
 if(BUILD_CAPTIONS)
 	include_directories(${CMAKE_SOURCE_DIR}/deps/libcaption)
@@ -358,6 +451,14 @@ if(BUILD_CAPTIONS)
 endif()
 
 add_library(libobs SHARED ${libobs_SOURCES} ${libobs_HEADERS})
+if(UNIX AND NOT APPLE)
+	set(DEST_DIR "${CMAKE_INSTALL_PREFIX}")
+	foreach(LIB "obs" "rt")
+		set(PRIVATE_LIBS "${PRIVATE_LIBS} -l${LIB}")
+	endforeach()
+	CONFIGURE_FILE("libobs.pc.in" "libobs.pc" @ONLY)
+	install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libobs.pc" DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig")
+endif()
 
 set_target_properties(libobs PROPERTIES
 	OUTPUT_NAME obs
@@ -367,7 +468,12 @@ target_compile_definitions(libobs
 	PUBLIC
 		HAVE_OBSCONFIG_H)
 
-if(NOT MSVC)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(powerpc|ppc)64le")
+	target_compile_options(libobs
+		PUBLIC
+			-mvsx)
+	add_compile_definitions(NO_WARN_X86_INTRINSICS)
+elseif(NOT MSVC)
 	target_compile_options(libobs
 		PUBLIC
 			-mmmx

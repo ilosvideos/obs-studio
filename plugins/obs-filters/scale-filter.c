@@ -8,6 +8,7 @@
 
 #define S_RESOLUTION                    "resolution"
 #define S_SAMPLING                      "sampling"
+#define S_UNDISTORT                     "undistort"
 
 #define T_RESOLUTION                    obs_module_text("Resolution")
 #define T_NONE                          obs_module_text("None")
@@ -16,6 +17,8 @@
 #define T_SAMPLING_BILINEAR             obs_module_text("ScaleFiltering.Bilinear")
 #define T_SAMPLING_BICUBIC              obs_module_text("ScaleFiltering.Bicubic")
 #define T_SAMPLING_LANCZOS              obs_module_text("ScaleFiltering.Lanczos")
+#define T_UNDISTORT                     obs_module_text("UndistortCenter")
+#define T_BASE                          obs_module_text("Base.Canvas")
 
 #define S_SAMPLING_POINT                "point"
 #define S_SAMPLING_BILINEAR             "bilinear"
@@ -27,16 +30,20 @@ struct scale_filter_data {
 	gs_effect_t                     *effect;
 	gs_eparam_t                     *image_param;
 	gs_eparam_t                     *dimension_param;
+	gs_eparam_t                     *undistort_factor_param;
 	struct vec2                     dimension_i;
+	double                          undistort_factor;
 	int                             cx_in;
 	int                             cy_in;
 	int                             cx_out;
 	int                             cy_out;
 	enum obs_scale_type             sampling;
 	gs_samplerstate_t               *point_sampler;
-	bool                            aspect_ratio_only : 1;
-	bool                            target_valid : 1;
-	bool                            valid : 1;
+	bool                            aspect_ratio_only;
+	bool                            target_valid;
+	bool                            valid;
+	bool                            undistort;
+	bool                            base_canvas_resolution;
 };
 
 static const char *scale_filter_name(void *unused)
@@ -54,18 +61,29 @@ static void scale_filter_update(void *data, obs_data_t *settings)
 	const char *sampling = obs_data_get_string(settings, S_SAMPLING);
 
 	filter->valid = true;
+	filter->base_canvas_resolution = false;
 
-	ret = sscanf(res_str, "%dx%d", &filter->cx_in, &filter->cy_in);
-	if (ret == 2) {
+	if (strcmp(res_str, T_BASE) == 0) {
+		struct obs_video_info ovi;
+		obs_get_video_info(&ovi);
 		filter->aspect_ratio_only = false;
+		filter->base_canvas_resolution = true;
+		filter->cx_in = ovi.base_width;
+		filter->cy_in = ovi.base_height;
 	} else {
-		ret = sscanf(res_str, "%d:%d", &filter->cx_in, &filter->cy_in);
-		if (ret != 2) {
-			filter->valid = false;
-			return;
-		}
+		ret = sscanf(res_str, "%dx%d", &filter->cx_in, &filter->cy_in);
+		if (ret == 2) {
+			filter->aspect_ratio_only = false;
+		} else {
+			ret = sscanf(res_str, "%d:%d", &filter->cx_in,
+					&filter->cy_in);
+			if (ret != 2) {
+				filter->valid = false;
+				return;
+			}
 
-		filter->aspect_ratio_only = true;
+			filter->aspect_ratio_only = true;
+		}
 	}
 
 	if (astrcmpi(sampling, S_SAMPLING_POINT) == 0) {
@@ -80,6 +98,8 @@ static void scale_filter_update(void *data, obs_data_t *settings)
 	} else { /* S_SAMPLING_BICUBIC */
 		filter->sampling = OBS_SCALE_BICUBIC;
 	}
+
+	filter->undistort = obs_data_get_bool(settings, S_UNDISTORT);
 }
 
 static void scale_filter_destroy(void *data)
@@ -119,6 +139,13 @@ static void scale_filter_tick(void *data, float seconds)
 	int cx;
 	int cy;
 
+	if (filter->base_canvas_resolution) {
+		struct obs_video_info ovi;
+		obs_get_video_info(&ovi);
+		filter->cx_in = ovi.base_width;
+		filter->cy_in = ovi.base_height;
+	}
+
 	target = obs_filter_get_target(filter->context);
 	filter->cx_out = 0;
 	filter->cy_out = 0;
@@ -146,11 +173,11 @@ static void scale_filter_tick(void *data, float seconds)
 	cx_f = (double)cx;
 	cy_f = (double)cy;
 
-	if (filter->aspect_ratio_only) {
-		double old_aspect = cx_f / cy_f;
-		double new_aspect =
-			(double)filter->cx_in / (double)filter->cy_in;
+	double old_aspect = cx_f / cy_f;
+	double new_aspect =
+		(double)filter->cx_in / (double)filter->cy_in;
 
+	if (filter->aspect_ratio_only) {
 		if (fabs(old_aspect - new_aspect) <= EPSILON) {
 			filter->target_valid = false;
 			return;
@@ -171,6 +198,12 @@ static void scale_filter_tick(void *data, float seconds)
 	vec2_set(&filter->dimension_i,
 			1.0f / (float)cx,
 			1.0f / (float)cy);
+
+	if (filter->undistort) {
+		filter->undistort_factor = new_aspect / old_aspect;
+	} else {
+		filter->undistort_factor = 1.0;
+	}
 
 	/* ------------------------- */
 
@@ -199,12 +232,22 @@ static void scale_filter_tick(void *data, float seconds)
 		filter->dimension_param = NULL;
 	}
 
+	if (type == OBS_EFFECT_BICUBIC || type == OBS_EFFECT_LANCZOS) {
+		filter->undistort_factor_param = gs_effect_get_param_by_name(
+			filter->effect, "undistort_factor");
+	}
+	else {
+		filter->undistort_factor_param = NULL;
+	}
+
 	UNUSED_PARAMETER(seconds);
 }
 
 static void scale_filter_render(void *data, gs_effect_t *effect)
 {
 	struct scale_filter_data *filter = data;
+	const char *technique = filter->undistort ?
+		"DrawUndistort" : "Draw";
 
 	if (!filter->valid || !filter->target_valid) {
 		obs_source_skip_video_filter(filter->context);
@@ -219,12 +262,16 @@ static void scale_filter_render(void *data, gs_effect_t *effect)
 		gs_effect_set_vec2(filter->dimension_param,
 				&filter->dimension_i);
 
+	if (filter->undistort_factor_param)
+		gs_effect_set_float(filter->undistort_factor_param,
+			(float)filter->undistort_factor);
+
 	if (filter->sampling == OBS_SCALE_POINT)
 		gs_effect_set_next_sampler(filter->image_param,
 				filter->point_sampler);
 
-	obs_source_process_filter_end(filter->context, filter->effect,
-			filter->cx_out, filter->cy_out);
+	obs_source_process_filter_tech_end(filter->context, filter->effect,
+			filter->cx_out, filter->cy_out, technique);
 
 	UNUSED_PARAMETER(effect);
 }
@@ -254,6 +301,34 @@ static const char *aspects[] = {
 
 #define NUM_ASPECTS (sizeof(aspects) / sizeof(const char *))
 
+static bool sampling_modified(obs_properties_t *props, obs_property_t *p,
+	obs_data_t *settings)
+{
+	const char *sampling = obs_data_get_string(settings, S_SAMPLING);
+
+	bool has_undistort;
+	if (astrcmpi(sampling, S_SAMPLING_POINT) == 0) {
+		has_undistort = false;
+
+	}
+	else if (astrcmpi(sampling, S_SAMPLING_BILINEAR) == 0) {
+		has_undistort = false;
+
+	}
+	else if (astrcmpi(sampling, S_SAMPLING_LANCZOS) == 0) {
+		has_undistort = true;
+
+	}
+	else { /* S_SAMPLING_BICUBIC */
+		has_undistort = true;
+	}
+
+	obs_property_set_visible(obs_properties_get(props, S_UNDISTORT), has_undistort);
+
+	UNUSED_PARAMETER(p);
+	return true;
+}
+
 static obs_properties_t *scale_filter_properties(void *data)
 {
 	obs_properties_t *props = obs_properties_create();
@@ -280,6 +355,7 @@ static obs_properties_t *scale_filter_properties(void *data)
 
 	p = obs_properties_add_list(props, S_SAMPLING, T_SAMPLING,
 			OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+	obs_property_set_modified_callback(p, sampling_modified);
 	obs_property_list_add_string(p, T_SAMPLING_POINT,    S_SAMPLING_POINT);
 	obs_property_list_add_string(p, T_SAMPLING_BILINEAR, S_SAMPLING_BILINEAR);
 	obs_property_list_add_string(p, T_SAMPLING_BICUBIC,  S_SAMPLING_BICUBIC);
@@ -291,6 +367,7 @@ static obs_properties_t *scale_filter_properties(void *data)
 			OBS_COMBO_TYPE_EDITABLE, OBS_COMBO_FORMAT_STRING);
 
 	obs_property_list_add_string(p, T_NONE, T_NONE);
+	obs_property_list_add_string(p, T_BASE, T_BASE);
 
 	for (size_t i = 0; i < NUM_ASPECTS; i++)
 		obs_property_list_add_string(p, aspects[i], aspects[i]);
@@ -300,6 +377,8 @@ static obs_properties_t *scale_filter_properties(void *data)
 		snprintf(str, 32, "%dx%d", downscales[i].cx, downscales[i].cy);
 		obs_property_list_add_string(p, str, str);
 	}
+
+	obs_properties_add_bool(props, S_UNDISTORT, T_UNDISTORT);
 
 	/* ----------------- */
 
@@ -311,6 +390,7 @@ static void scale_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_string(settings, S_SAMPLING, S_SAMPLING_BICUBIC);
 	obs_data_set_default_string(settings, S_RESOLUTION, T_NONE);
+	obs_data_set_default_bool(settings, S_UNDISTORT, 0);
 }
 
 static uint32_t scale_filter_width(void *data)

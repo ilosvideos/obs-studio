@@ -18,6 +18,8 @@
 #include <cinttypes>
 #include <util/base.h>
 #include <util/platform.h>
+#include <util/dstr.h>
+#include <util/util.hpp>
 #include <graphics/matrix3.h>
 #include "d3d11-subsystem.hpp"
 
@@ -166,6 +168,9 @@ gs_swap_chain::gs_swap_chain(gs_device *device, const gs_init_data *data)
 	if (FAILED(hr))
 		throw HRError("Failed to create swap chain", hr);
 
+	/* Ignore Alt+Enter */
+	device->factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+
 	Init();
 }
 
@@ -196,7 +201,9 @@ void gs_device::InitCompiler()
 		ver--;
 	}
 
-	throw "Could not find any D3DCompiler libraries";
+	throw "Could not find any D3DCompiler libraries. Make sure you've "
+		"installed the <a href=\"https://obsproject.com/go/dxwebsetup\">"
+		"DirectX components</a> that OBS Studio requires.";
 }
 
 void gs_device::InitFactory(uint32_t adapterIdx)
@@ -222,6 +229,113 @@ const static D3D_FEATURE_LEVEL featureLevels[] =
 	D3D_FEATURE_LEVEL_9_3,
 };
 
+/* ------------------------------------------------------------------------- */
+
+#define VERT_IN_OUT "\
+struct VertInOut { \
+	float4 pos : POSITION; \
+}; "
+
+#define NV12_Y_PS VERT_IN_OUT "\
+float main(VertInOut vert_in) : TARGET \
+{ \
+	return 1.0; \
+}"
+
+#define NV12_UV_PS VERT_IN_OUT "\
+float2 main(VertInOut vert_in) : TARGET \
+{ \
+	return float2(1.0, 1.0); \
+}"
+
+#define NV12_VS VERT_IN_OUT "\
+VertInOut main(VertInOut vert_in) \
+{ \
+	VertInOut vert_out; \
+	vert_out.pos = float4(vert_in.pos.xyz, 1.0); \
+	return vert_out; \
+} "
+
+/* ------------------------------------------------------------------------- */
+
+#define NV12_CX 128
+#define NV12_CY 128
+
+bool gs_device::HasBadNV12Output()
+try {
+	vec3 points[4];
+	vec3_set(&points[0], -1.0f, -1.0f, 0.0f);
+	vec3_set(&points[1], -1.0f,  1.0f, 0.0f);
+	vec3_set(&points[2],  1.0f, -1.0f, 0.0f);
+	vec3_set(&points[3],  1.0f,  1.0f, 0.0f);
+
+	gs_texture_2d nv12_y(this, NV12_CX, NV12_CY, GS_R8, 1, nullptr,
+			GS_RENDER_TARGET, GS_TEXTURE_2D, false, true);
+	gs_texture_2d nv12_uv(this, nv12_y.texture, GS_RENDER_TARGET);
+	gs_vertex_shader nv12_vs(this, "", NV12_VS);
+	gs_pixel_shader nv12_y_ps(this, "", NV12_Y_PS);
+	gs_pixel_shader nv12_uv_ps(this, "", NV12_UV_PS);
+	gs_stage_surface nv12_stage(this, NV12_CX, NV12_CY);
+
+	gs_vb_data *vbd = gs_vbdata_create();
+	vbd->num        = 4;
+	vbd->points     = (vec3*)bmemdup(&points, sizeof(points));
+
+	gs_vertex_buffer buf(this, vbd, 0);
+
+	device_load_vertexbuffer(this, &buf);
+	device_load_vertexshader(this, &nv12_vs);
+
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	device_set_viewport(this, 0, 0, NV12_CX, NV12_CY);
+	device_set_cull_mode(this, GS_NEITHER);
+	device_enable_depth_test(this, false);
+	device_enable_blending(this, false);
+	LoadVertexBufferData();
+
+	device_set_render_target(this, &nv12_y, nullptr);
+	device_load_pixelshader(this, &nv12_y_ps);
+	UpdateBlendState();
+	UpdateRasterState();
+	UpdateZStencilState();
+	context->Draw(4, 0);
+
+	device_set_viewport(this, 0, 0, NV12_CX/2, NV12_CY/2);
+	device_set_render_target(this, &nv12_uv, nullptr);
+	device_load_pixelshader(this, &nv12_uv_ps);
+	UpdateBlendState();
+	UpdateRasterState();
+	UpdateZStencilState();
+	context->Draw(4, 0);
+
+	device_load_pixelshader(this, nullptr);
+	device_load_vertexshader(this, nullptr);
+	device_set_render_target(this, nullptr, nullptr);
+
+	device_stage_texture(this, &nv12_stage, &nv12_y);
+
+	uint8_t *data;
+	uint32_t linesize;
+	bool bad_driver = false;
+
+	if (gs_stagesurface_map(&nv12_stage, &data, &linesize)) {
+		bad_driver = data[linesize * NV12_CY] == 0;
+		gs_stagesurface_unmap(&nv12_stage);
+	}
+
+	if (bad_driver) {
+		blog(LOG_WARNING, "Bad NV12 texture handling detected!  "
+				  "Disabling NV12 texture support.");
+	}
+	return bad_driver;
+
+} catch (HRError) {
+	return false;
+} catch (const char *) {
+	return false;
+}
+
 void gs_device::InitDevice(uint32_t adapterIdx)
 {
 	wstring adapterName;
@@ -239,11 +353,10 @@ void gs_device::InitDevice(uint32_t adapterIdx)
 	adapterName = (adapter->GetDesc(&desc) == S_OK) ? desc.Description :
 		L"<unknown>";
 
-	char *adapterNameUTF8;
+	BPtr<char> adapterNameUTF8;
 	os_wcs_to_utf8_ptr(adapterName.c_str(), 0, &adapterNameUTF8);
 	blog(LOG_INFO, "Loading up D3D11 on adapter %s (%" PRIu32 ")",
-			adapterNameUTF8, adapterIdx);
-	bfree(adapterNameUTF8);
+			adapterNameUTF8.Get(), adapterIdx);
 
 	hr = D3D11CreateDevice(adapter, D3D_DRIVER_TYPE_UNKNOWN,
 			NULL, createFlags, featureLevels,
@@ -253,8 +366,51 @@ void gs_device::InitDevice(uint32_t adapterIdx)
 	if (FAILED(hr))
 		throw UnsupportedHWError("Failed to create device", hr);
 
-	blog(LOG_INFO, "D3D11 loaded sucessfully, feature level used: %u",
+	blog(LOG_INFO, "D3D11 loaded successfully, feature level used: %u",
 			(unsigned int)levelUsed);
+
+	/* ---------------------------------------- */
+	/* check for nv12 texture output support    */
+
+	nv12Supported = false;
+
+	ComQIPtr<ID3D11Device1> d3d11_1(device);
+	if (!d3d11_1) {
+		return;
+	}
+
+	/* needs to support extended resource sharing */
+	D3D11_FEATURE_DATA_D3D11_OPTIONS opts = {};
+	hr = d3d11_1->CheckFeatureSupport(
+			D3D11_FEATURE_D3D11_OPTIONS,
+			&opts, sizeof(opts));
+	if (FAILED(hr) || !opts.ExtendedResourceSharing) {
+		return;
+	}
+
+	/* needs to support the actual format */
+	UINT support = 0;
+	hr = device->CheckFormatSupport(
+			DXGI_FORMAT_NV12,
+			&support);
+	if (FAILED(hr)) {
+		return;
+	}
+
+	if ((support & D3D11_FORMAT_SUPPORT_TEXTURE2D) == 0) {
+		return;
+	}
+
+	/* must be usable as a render target */
+	if ((support & D3D11_FORMAT_SUPPORT_RENDER_TARGET) == 0) {
+		return;
+	}
+
+	if (HasBadNV12Output()) {
+		return;
+	}
+
+	nv12Supported = true;
 }
 
 static inline void ConvertStencilSide(D3D11_DEPTH_STENCILOP_DESC &desc,
@@ -339,7 +495,10 @@ ID3D11BlendState *gs_device::AddBlendState()
 		bd.RenderTarget[i].DestBlendAlpha =
 			ConvertGSBlendType(blendState.destFactorA);
 		bd.RenderTarget[i].RenderTargetWriteMask =
-			D3D11_COLOR_WRITE_ENABLE_ALL;
+			(blendState.redEnabled   ? D3D11_COLOR_WRITE_ENABLE_RED   : 0) |
+			(blendState.greenEnabled ? D3D11_COLOR_WRITE_ENABLE_GREEN : 0) |
+			(blendState.blueEnabled  ? D3D11_COLOR_WRITE_ENABLE_BLUE  : 0) |
+			(blendState.alphaEnabled ? D3D11_COLOR_WRITE_ENABLE_ALPHA : 0) ;
 	}
 
 	SavedBlendState savedState(blendState, bd);
@@ -514,7 +673,7 @@ static inline void EnumD3DAdapters(
 		if (FAILED(hr))
 			continue;
 
-		/* ignore microsoft's 'basic' renderer' */
+		/* ignore Microsoft's 'basic' renderer' */
 		if (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c)
 			continue;
 
@@ -586,7 +745,7 @@ static inline void LogD3DAdapters()
 		if (FAILED(hr))
 			continue;
 
-		/* ignore microsoft's 'basic' renderer' */
+		/* ignore Microsoft's 'basic' renderer' */
 		if (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c)
 			continue;
 
@@ -608,7 +767,7 @@ int device_create(gs_device_t **p_device, uint32_t adapter)
 
 	try {
 		blog(LOG_INFO, "---------------------------------");
-		blog(LOG_INFO, "Initializing D3D11..");
+		blog(LOG_INFO, "Initializing D3D11...");
 		LogD3DAdapters();
 
 		device = new gs_device(adapter);
@@ -728,8 +887,7 @@ gs_texture_t *device_texture_create(gs_device_t *device, uint32_t width,
 	gs_texture *texture = NULL;
 	try {
 		texture = new gs_texture_2d(device, width, height, color_format,
-				levels, data, flags, GS_TEXTURE_2D, false,
-				false);
+				levels, data, flags, GS_TEXTURE_2D, false);
 	} catch (HRError error) {
 		blog(LOG_ERROR, "device_texture_create (D3D11): %s (%08lX)",
 				error.str, error.hr);
@@ -748,8 +906,7 @@ gs_texture_t *device_cubetexture_create(gs_device_t *device, uint32_t size,
 	gs_texture *texture = NULL;
 	try {
 		texture = new gs_texture_2d(device, size, size, color_format,
-				levels, data, flags, GS_TEXTURE_CUBE, false,
-				false);
+				levels, data, flags, GS_TEXTURE_CUBE, false);
 	} catch (HRError error) {
 		blog(LOG_ERROR, "device_cubetexture_create (D3D11): %s "
 		                "(%08lX)",
@@ -929,33 +1086,40 @@ enum gs_texture_type device_get_texture_type(const gs_texture_t *texture)
 	return texture->type;
 }
 
-void device_load_vertexbuffer(gs_device_t *device, gs_vertbuffer_t *vertbuffer)
+void gs_device::LoadVertexBufferData()
 {
-	if (device->curVertexBuffer == vertbuffer)
-		return;
-
-	device->curVertexBuffer = vertbuffer;
-
-	if (!device->curVertexShader)
+	if (curVertexBuffer == lastVertexBuffer &&
+	    curVertexShader == lastVertexShader)
 		return;
 
 	vector<ID3D11Buffer*> buffers;
 	vector<uint32_t> strides;
 	vector<uint32_t> offsets;
 
-	if (vertbuffer) {
-		vertbuffer->MakeBufferList(device->curVertexShader,
+	if (curVertexBuffer && curVertexShader) {
+		curVertexBuffer->MakeBufferList(curVertexShader,
 				buffers, strides);
 	} else {
-		size_t buffersToClear =
-			device->curVertexShader->NumBuffersExpected();
+		size_t buffersToClear = curVertexShader
+			? curVertexShader->NumBuffersExpected() : 0;
 		buffers.resize(buffersToClear);
 		strides.resize(buffersToClear);
 	}
 
 	offsets.resize(buffers.size());
-	device->context->IASetVertexBuffers(0, (UINT)buffers.size(),
+	context->IASetVertexBuffers(0, (UINT)buffers.size(),
 			buffers.data(), strides.data(), offsets.data());
+
+	lastVertexBuffer = curVertexBuffer;
+	lastVertexShader = curVertexShader;
+}
+
+void device_load_vertexbuffer(gs_device_t *device, gs_vertbuffer_t *vertbuffer)
+{
+	if (device->curVertexBuffer == vertbuffer)
+		return;
+
+	device->curVertexBuffer = vertbuffer;
 }
 
 void device_load_indexbuffer(gs_device_t *device, gs_indexbuffer_t *indexbuffer)
@@ -1022,7 +1186,6 @@ void device_load_vertexshader(gs_device_t *device, gs_shader_t *vertshader)
 		return;
 
 	gs_vertex_shader *vs = static_cast<gs_vertex_shader*>(vertshader);
-	gs_vertex_buffer *curVB = device->curVertexBuffer;
 
 	if (vertshader) {
 		if (vertshader->type != GS_SHADER_VERTEX) {
@@ -1031,9 +1194,6 @@ void device_load_vertexshader(gs_device_t *device, gs_shader_t *vertshader)
 			                "shader");
 			return;
 		}
-
-		if (curVB)
-			device_load_vertexbuffer(device, NULL);
 
 		shader    = vs->shader;
 		layout    = vs->layout;
@@ -1044,9 +1204,6 @@ void device_load_vertexshader(gs_device_t *device, gs_shader_t *vertshader)
 	device->context->VSSetShader(shader, NULL, 0);
 	device->context->IASetInputLayout(layout);
 	device->context->VSSetConstantBuffers(0, 1, &constants);
-
-	if (vertshader && curVB)
-		device_load_vertexbuffer(device, curVB);
 }
 
 static inline void clear_textures(gs_device_t *device)
@@ -1309,7 +1466,7 @@ void device_stage_texture(gs_device_t *device, gs_stagesurf_t *dst,
 			throw "Source texture must be a 2D texture";
 		if (!dst)
 			throw "Destination surface is NULL";
-		if (dst->format != src->format)
+		if (dst->format != GS_UNKNOWN && dst->format != src->format)
 			throw "Source and destination formats do not match";
 		if (dst->width  != src2d->width ||
 		    dst->height != src2d->height)
@@ -1348,6 +1505,7 @@ void device_draw(gs_device_t *device, enum gs_draw_mode draw_mode,
 		if (effect)
 			gs_effect_update_params(effect);
 
+		device->LoadVertexBufferData();
 		device->UpdateBlendState();
 		device->UpdateRasterState();
 		device->UpdateZStencilState();
@@ -1450,9 +1608,12 @@ void device_present(gs_device_t *device)
 	}
 }
 
+extern "C" void reset_duplicators(void);
+
 void device_flush(gs_device_t *device)
 {
 	device->context->Flush();
+	reset_duplicators();
 }
 
 void device_set_cull_mode(gs_device_t *device, enum gs_cull_mode mode)
@@ -1926,37 +2087,56 @@ void gs_samplerstate_destroy(gs_samplerstate_t *samplerstate)
 
 void gs_vertexbuffer_destroy(gs_vertbuffer_t *vertbuffer)
 {
+	if (vertbuffer && vertbuffer->device->lastVertexBuffer == vertbuffer)
+		vertbuffer->device->lastVertexBuffer = nullptr;
 	delete vertbuffer;
 }
 
-void gs_vertexbuffer_flush(gs_vertbuffer_t *vertbuffer)
+static inline void gs_vertexbuffer_flush_internal(gs_vertbuffer_t *vertbuffer,
+		const gs_vb_data *data)
 {
+	size_t num_tex = data->num_tex < vertbuffer->uvBuffers.size()
+		? data->num_tex
+		: vertbuffer->uvBuffers.size();
+
 	if (!vertbuffer->dynamic) {
 		blog(LOG_ERROR, "gs_vertexbuffer_flush: vertex buffer is "
 		                "not dynamic");
 		return;
 	}
 
-	vertbuffer->FlushBuffer(vertbuffer->vertexBuffer,
-			vertbuffer->vbd.data->points, sizeof(vec3));
+	if (data->points)
+		vertbuffer->FlushBuffer(vertbuffer->vertexBuffer,
+				data->points, sizeof(vec3));
 
-	if (vertbuffer->normalBuffer)
+	if (vertbuffer->normalBuffer && data->normals)
 		vertbuffer->FlushBuffer(vertbuffer->normalBuffer,
-				vertbuffer->vbd.data->normals, sizeof(vec3));
+				data->normals, sizeof(vec3));
 
-	if (vertbuffer->tangentBuffer)
+	if (vertbuffer->tangentBuffer && data->tangents)
 		vertbuffer->FlushBuffer(vertbuffer->tangentBuffer,
-				vertbuffer->vbd.data->tangents, sizeof(vec3));
+				data->tangents, sizeof(vec3));
 
-	if (vertbuffer->colorBuffer)
+	if (vertbuffer->colorBuffer && data->colors)
 		vertbuffer->FlushBuffer(vertbuffer->colorBuffer,
-				vertbuffer->vbd.data->colors, sizeof(uint32_t));
+				data->colors, sizeof(uint32_t));
 
-	for (size_t i = 0; i < vertbuffer->uvBuffers.size(); i++) {
-		gs_tvertarray &tv = vertbuffer->vbd.data->tvarray[i];
+	for (size_t i = 0; i < num_tex; i++) {
+		gs_tvertarray &tv = data->tvarray[i];
 		vertbuffer->FlushBuffer(vertbuffer->uvBuffers[i],
 				tv.array, tv.width*sizeof(float));
 	}
+}
+
+void gs_vertexbuffer_flush(gs_vertbuffer_t *vertbuffer)
+{
+	gs_vertexbuffer_flush_internal(vertbuffer, vertbuffer->vbd.data);
+}
+
+void gs_vertexbuffer_flush_direct(gs_vertbuffer_t *vertbuffer,
+		const gs_vb_data *data)
+{
+	gs_vertexbuffer_flush_internal(vertbuffer, data);
 }
 
 struct gs_vb_data *gs_vertexbuffer_get_data(const gs_vertbuffer_t *vertbuffer)
@@ -1970,7 +2150,8 @@ void gs_indexbuffer_destroy(gs_indexbuffer_t *indexbuffer)
 	delete indexbuffer;
 }
 
-void gs_indexbuffer_flush(gs_indexbuffer_t *indexbuffer)
+static inline void gs_indexbuffer_flush_internal(gs_indexbuffer_t *indexbuffer,
+		const void *data)
 {
 	HRESULT hr;
 
@@ -1983,10 +2164,20 @@ void gs_indexbuffer_flush(gs_indexbuffer_t *indexbuffer)
 	if (FAILED(hr))
 		return;
 
-	memcpy(map.pData, indexbuffer->indices.data,
-			indexbuffer->num * indexbuffer->indexSize);
+	memcpy(map.pData, data, indexbuffer->num * indexbuffer->indexSize);
 
 	indexbuffer->device->context->Unmap(indexbuffer->indexBuffer, 0);
+}
+
+void gs_indexbuffer_flush(gs_indexbuffer_t *indexbuffer)
+{
+	gs_indexbuffer_flush_internal(indexbuffer, indexbuffer->indices.data);
+}
+
+void gs_indexbuffer_flush_direct(gs_indexbuffer_t *indexbuffer,
+		const void *data)
+{
+	gs_indexbuffer_flush_internal(indexbuffer, data);
 }
 
 void *gs_indexbuffer_get_data(const gs_indexbuffer_t *indexbuffer)
@@ -2014,6 +2205,11 @@ extern "C" EXPORT bool device_shared_texture_available(void)
 	return true;
 }
 
+extern "C" EXPORT bool device_nv12_available(gs_device_t *device)
+{
+	return device->nv12Supported;
+}
+
 extern "C" EXPORT gs_texture_t *device_texture_create_gdi(gs_device_t *device,
 		uint32_t width, uint32_t height)
 {
@@ -2021,7 +2217,7 @@ extern "C" EXPORT gs_texture_t *device_texture_create_gdi(gs_device_t *device,
 	try {
 		texture = new gs_texture_2d(device, width, height, GS_BGRA,
 				1, nullptr, GS_RENDER_TARGET, GS_TEXTURE_2D,
-				true, false);
+				true);
 	} catch (HRError error) {
 		blog(LOG_ERROR, "device_texture_create_gdi (D3D11): %s (%08lX)",
 				error.str, error.hr);
@@ -2089,4 +2285,113 @@ extern "C" EXPORT gs_texture_t *device_texture_open_shared(gs_device_t *device,
 	}
 
 	return texture;
+}
+
+extern "C" EXPORT uint32_t device_texture_get_shared_handle(gs_texture_t *tex)
+{
+	gs_texture_2d *tex2d = reinterpret_cast<gs_texture_2d *>(tex);
+	if (tex->type != GS_TEXTURE_2D)
+		return GS_INVALID_HANDLE;
+
+	return tex2d->isShared ? tex2d->sharedHandle : GS_INVALID_HANDLE;
+}
+
+int device_texture_acquire_sync(gs_texture_t *tex, uint64_t key, uint32_t ms)
+{
+	gs_texture_2d *tex2d = reinterpret_cast<gs_texture_2d *>(tex);
+	if (tex->type != GS_TEXTURE_2D)
+		return -1;
+
+	if (tex2d->acquired)
+		return 0;
+
+	ComQIPtr<IDXGIKeyedMutex> keyedMutex(tex2d->texture);
+	if (!keyedMutex)
+		return -1;
+
+	HRESULT hr = keyedMutex->AcquireSync(key, ms);
+	if (hr == S_OK) {
+		tex2d->acquired = true;
+		return 0;
+	} else if (hr == WAIT_TIMEOUT) {
+		return ETIMEDOUT;
+	}
+
+	return -1;
+}
+
+extern "C" EXPORT int device_texture_release_sync(gs_texture_t *tex,
+		uint64_t key)
+{
+	gs_texture_2d *tex2d = reinterpret_cast<gs_texture_2d *>(tex);
+	if (tex->type != GS_TEXTURE_2D)
+		return -1;
+
+	if (!tex2d->acquired)
+		return 0;
+
+	ComQIPtr<IDXGIKeyedMutex> keyedMutex(tex2d->texture);
+	if (!keyedMutex)
+		return -1;
+
+	HRESULT hr = keyedMutex->ReleaseSync(key);
+	if (hr == S_OK) {
+		tex2d->acquired = false;
+		return 0;
+	}
+
+	return -1;
+}
+
+extern "C" EXPORT bool device_texture_create_nv12(gs_device_t *device,
+		gs_texture_t **p_tex_y, gs_texture_t **p_tex_uv,
+		uint32_t width, uint32_t height, uint32_t flags)
+{
+	if (!device->nv12Supported)
+		return false;
+
+	*p_tex_y = nullptr;
+	*p_tex_uv = nullptr;
+
+	gs_texture_2d *tex_y;
+	gs_texture_2d *tex_uv;
+
+	try {
+		tex_y = new gs_texture_2d(device, width, height, GS_R8, 1,
+				nullptr, flags, GS_TEXTURE_2D, false, true);
+		tex_uv = new gs_texture_2d(device, tex_y->texture, flags);
+
+	} catch (HRError error) {
+		blog(LOG_ERROR, "gs_texture_create_nv12 (D3D11): %s (%08lX)",
+				error.str, error.hr);
+		LogD3D11ErrorDetails(error, device);
+		return false;
+
+	} catch (const char *error) {
+		blog(LOG_ERROR, "gs_texture_create_nv12 (D3D11): %s", error);
+		return false;
+	}
+
+	tex_y->pairedNV12texture = tex_uv;
+	tex_uv->pairedNV12texture = tex_y;
+
+	*p_tex_y = tex_y;
+	*p_tex_uv = tex_uv;
+	return true;
+}
+
+extern "C" EXPORT gs_stagesurf_t *device_stagesurface_create_nv12(
+		gs_device_t *device, uint32_t width, uint32_t height)
+{
+	gs_stage_surface *surf = NULL;
+	try {
+		surf = new gs_stage_surface(device, width, height);
+	} catch (HRError error) {
+		blog(LOG_ERROR, "device_stagesurface_create (D3D11): %s "
+		                "(%08lX)",
+				error.str, error.hr);
+		LogD3D11ErrorDetails(error, device);
+	}
+
+	return surf;
 }

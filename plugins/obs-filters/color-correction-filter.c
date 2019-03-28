@@ -70,7 +70,10 @@ struct color_correction_filter_data {
 	struct vec3                     half_unit;
 };
 
-const static float root3 = 0.57735f;
+static const float root3 = 0.57735f;
+static const float red_weight = 0.299f;
+static const float green_weight = 0.587f;
+static const float blue_weight = 0.114f;
 
 /*
  * As the functions' namesake, this provides the internal name of your Filter,
@@ -130,15 +133,19 @@ static void color_correction_filter_update(void *data, obs_data_t *settings)
 			SETTING_SATURATION) + 1.0f;
 
 	/* Factor in the selected color weights. */
-	float one_minus_sat = (1.0f - filter->saturation) / 3.0f;
-	float sat_val = one_minus_sat + filter->saturation;
+	float one_minus_sat_red = (1.0f - filter->saturation) * red_weight;
+	float one_minus_sat_green = (1.0f - filter->saturation) * green_weight;
+	float one_minus_sat_blue = (1.0f - filter->saturation) * blue_weight;
+	float sat_val_red   = one_minus_sat_red + filter->saturation;
+	float sat_val_green = one_minus_sat_green + filter->saturation;
+	float sat_val_blue  = one_minus_sat_blue + filter->saturation;
 
 	/* Now we build our Saturation matrix. */
 	filter->sat_matrix = (struct matrix4)
 	{
-		sat_val, one_minus_sat, one_minus_sat, 0.0f,
-		one_minus_sat, sat_val, one_minus_sat, 0.0f,
-		one_minus_sat, one_minus_sat, sat_val, 0.0f,
+		sat_val_red, one_minus_sat_red, one_minus_sat_red, 0.0f,
+		one_minus_sat_green, sat_val_green, one_minus_sat_green, 0.0f,
+		one_minus_sat_blue, one_minus_sat_blue, sat_val_blue, 0.0f,
 		0.0f, 0.0f, 0.0f, 1.0f
 	};
 
@@ -344,16 +351,16 @@ static obs_properties_t *color_correction_filter_properties(void *data)
 	obs_properties_t *props = obs_properties_create();
 
 	obs_properties_add_float_slider(props, SETTING_GAMMA,
-			TEXT_GAMMA, -3.0f, 3.0f, 0.01f);
+			TEXT_GAMMA, -3.0, 3.0, 0.01);
 
 	obs_properties_add_float_slider(props, SETTING_CONTRAST,
-			TEXT_CONTRAST, -2.0f, 2.0f, 0.01f);
+			TEXT_CONTRAST, -2.0, 2.0, 0.01);
 	obs_properties_add_float_slider(props, SETTING_BRIGHTNESS,
-			TEXT_BRIGHTNESS, -1.0f, 1.0f, 0.01f);
+			TEXT_BRIGHTNESS, -1.0, 1.0, 0.01);
 	obs_properties_add_float_slider(props, SETTING_SATURATION,
-			TEXT_SATURATION, -1.0f, 5.0f, 0.01f);
+			TEXT_SATURATION, -1.0, 5.0, 0.01);
 	obs_properties_add_float_slider(props, SETTING_HUESHIFT,
-			TEXT_HUESHIFT, -180.0f, 180.0f, 0.01f);
+			TEXT_HUESHIFT, -180.0, 180.0, 0.01);
 	obs_properties_add_int_slider(props, SETTING_OPACITY,
 			TEXT_OPACITY, 0, 100, 1);
 

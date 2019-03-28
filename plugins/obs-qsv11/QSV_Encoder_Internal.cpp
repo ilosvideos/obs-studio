@@ -69,14 +69,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define info(format, ...)  do_log(LOG_INFO,    format, ##__VA_ARGS__)
 #define debug(format, ...) do_log(LOG_DEBUG,   format, ##__VA_ARGS__)
 
+mfxHDL QSV_Encoder_Internal::g_DX_Handle = NULL;
+mfxU16 QSV_Encoder_Internal::g_numEncodersOpen = 0;
+
 QSV_Encoder_Internal::QSV_Encoder_Internal(mfxIMPL& impl, mfxVersion& version) :
+	m_pmfxSurfaces(NULL),
 	m_pmfxENC(NULL),
 	m_nSPSBufferSize(100),
 	m_nPPSBufferSize(100),
 	m_nTaskPool(0),
 	m_pTaskPool(NULL),
 	m_nTaskIdx(0),
-	m_nFirstSyncTask(0)
+	m_nFirstSyncTask(0),
+	m_outBitstream()
 {
 	mfxIMPL tempImpl;
 	mfxStatus sts;
@@ -152,10 +157,10 @@ mfxStatus QSV_Encoder_Internal::Open(qsv_param_t * pParams)
 
 	if (m_bUseD3D11)
 		// Use D3D11 surface
-		sts = Initialize(m_impl, m_ver, &m_session, &m_mfxAllocator, false, false);
+		sts = Initialize(m_impl, m_ver, &m_session, &m_mfxAllocator, &g_DX_Handle, false, false);
 	else if (m_bD3D9HACK)
 		// Use hack
-		sts = Initialize(m_impl, m_ver, &m_session, &m_mfxAllocator, false, true);
+		sts = Initialize(m_impl, m_ver, &m_session, &m_mfxAllocator, &g_DX_Handle, false, true);
 	else
 		sts = Initialize(m_impl, m_ver, &m_session, NULL);
 
@@ -182,6 +187,9 @@ mfxStatus QSV_Encoder_Internal::Open(qsv_param_t * pParams)
 	sts = InitBitstream();
 	MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
 
+	if (sts >= MFX_ERR_NONE) {
+		g_numEncodersOpen++;
+	}
 	return sts;
 }
 
@@ -517,21 +525,24 @@ mfxStatus QSV_Encoder_Internal::Encode(uint64_t ts, uint8_t *pDataY,
 	}
 
 	mfxFrameSurface1 *pSurface = m_pmfxSurfaces[nSurfIdx];
-	if (m_bUseD3D11 || m_bD3D9HACK)
+	if (m_bUseD3D11 || m_bD3D9HACK) {
 		sts = m_mfxAllocator.Lock(m_mfxAllocator.pthis,
 				pSurface->Data.MemId, &(pSurface->Data));
+		MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
+	}
 
 	sts = LoadNV12(pSurface, pDataY, pDataUV, strideY, strideUV);
+	MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
 	pSurface->Data.TimeStamp = ts;
 
-	if (m_bUseD3D11 || m_bD3D9HACK)
+	if (m_bUseD3D11 || m_bD3D9HACK) {
 		sts = m_mfxAllocator.Unlock(m_mfxAllocator.pthis,
 				pSurface->Data.MemId, &(pSurface->Data));
-
-	MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
+		MSDK_CHECK_RESULT(sts, MFX_ERR_NONE, sts);
+	}
 
 	for (;;) {
-		// Encode a frame asychronously (returns immediately)
+		// Encode a frame asynchronously (returns immediately)
 		sts = m_pmfxENC->EncodeFrameAsync(NULL, pSurface,
 				&m_pTaskPool[nTaskIdx].mfxBS,
 				&m_pTaskPool[nTaskIdx].syncp);
@@ -573,35 +584,47 @@ mfxStatus QSV_Encoder_Internal::ClearData()
 	mfxStatus sts = MFX_ERR_NONE;
 	sts = Drain();
 
-	sts = m_pmfxENC->Close();
-
-	if (m_bUseD3D11 || m_bD3D9HACK)
-		m_mfxAllocator.Free(m_mfxAllocator.pthis, &m_mfxResponse);
-
-	for (int i = 0; i < m_nSurfNum; i++) {
-		if (!m_bUseD3D11 && !m_bD3D9HACK)
-			delete m_pmfxSurfaces[i]->Data.Y;
-
-		delete m_pmfxSurfaces[i];
-	}
-	MSDK_SAFE_DELETE_ARRAY(m_pmfxSurfaces);
-
-	for (int i = 0; i < m_nTaskPool; i++)
-		delete m_pTaskPool[i].mfxBS.Data;
-	MSDK_SAFE_DELETE_ARRAY(m_pTaskPool);
-
-	delete m_outBitstream.Data;
-
-	if (m_pmfxENC != NULL) {
+	if (m_pmfxENC)
+	{
+		sts = m_pmfxENC->Close();
 		delete m_pmfxENC;
 		m_pmfxENC = NULL;
 	}
 
 	if (m_bUseD3D11 || m_bD3D9HACK)
+		m_mfxAllocator.Free(m_mfxAllocator.pthis, &m_mfxResponse);
+
+	if (m_pmfxSurfaces) {
+		for (int i = 0; i < m_nSurfNum; i++) {
+			if (!m_bUseD3D11 && !m_bD3D9HACK)
+				delete m_pmfxSurfaces[i]->Data.Y;
+
+			delete m_pmfxSurfaces[i];
+		}
+		MSDK_SAFE_DELETE_ARRAY(m_pmfxSurfaces);
+	}
+
+	if (m_pTaskPool) {
+		for (int i = 0; i < m_nTaskPool; i++)
+			delete m_pTaskPool[i].mfxBS.Data;
+		MSDK_SAFE_DELETE_ARRAY(m_pTaskPool);
+	}
+
+	if (m_outBitstream.Data)
+	{
+		delete m_outBitstream.Data;
+		m_outBitstream.Data = NULL;
+	}
+
+	if (sts >= MFX_ERR_NONE) {
+		g_numEncodersOpen--;
+	}
+
+	if ((m_bUseD3D11 || m_bD3D9HACK) && (g_numEncodersOpen <= 0)) {
 		Release();
-
+		g_DX_Handle = NULL;
+	}
 	m_session.Close();
-
 	return sts;
 }
 

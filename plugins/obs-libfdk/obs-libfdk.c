@@ -9,7 +9,6 @@
 
 #include <fdk-aac/aacenc_lib.h>
 
-
 static const char *libfdk_get_error(AACENC_ERROR err)
 {
 	switch(err) {
@@ -72,7 +71,7 @@ static obs_properties_t *libfdk_properties(void *unused)
 	obs_properties_t *props = obs_properties_create();
 
 	obs_properties_add_int(props, "bitrate",
-			obs_module_text("Bitrate"), 32, 256, 32);
+			obs_module_text("Bitrate"), 32, 1024, 32);
 	obs_properties_add_bool(props, "afterburner",
 			obs_module_text("Afterburner"));
 
@@ -131,6 +130,16 @@ static void *libfdk_create(obs_data_t *settings, obs_encoder_t *encoder)
 	case 6:
 		mode = MODE_1_2_2_1;
 		break;
+
+        /* lib_fdk-aac > 1.3 required for 7.1 surround;
+         * uncomment if available on linux build
+         */
+#ifndef __linux__
+	case 8:
+		mode = MODE_7_1_REAR_SURROUND;
+		break;
+#endif
+
 	default:
 		blog(LOG_ERROR, "Invalid channel count");
 		goto fail;
@@ -214,7 +223,7 @@ static bool libfdk_encode(void *data, struct encoder_frame *frame,
 	void *in_ptr;
 	void *out_ptr;
 	AACENC_ERROR err;
-
+	int64_t encoderDelay;
 
 	in_ptr = frame->data[0];
 	in_size = enc->frame_size_bytes;
@@ -251,10 +260,13 @@ static bool libfdk_encode(void *data, struct encoder_frame *frame,
 	}
 
 	*received_packet = true;
-
-	packet->pts  = enc->total_samples -
-	               enc->info.encoderDelay; // TODO: Just a guess, find out if that's actualy right
-	packet->dts  = enc->total_samples - enc->info.encoderDelay;
+#if (AACENCODER_LIB_VL0 >= 4)
+	encoderDelay= enc->info.nDelay;
+#else
+	encoderDelay= enc->info.encoderDelay;
+#endif
+	packet->pts  = enc->total_samples - encoderDelay;
+	packet->dts  = enc->total_samples - encoderDelay;
 	packet->data = enc->packet_buffer;
 	packet->size = out_args.numOutBytes;
 	packet->type = OBS_ENCODER_AUDIO;
