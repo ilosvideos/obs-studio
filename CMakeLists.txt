@@ -30,8 +30,8 @@ if(WIN32)
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
-set(ENABLE_SCRIPTING TRUE CACHE BOOL "Enables scripting")
-set(SCRIPTING_ENABLED OFF CACHE BOOL "Internal global cmake variable" FORCE)
+set(ENABLE_SCRIPTING FALSE CACHE BOOL "Enables scripting")
+set(SCRIPTING_ENABLED OFF CACHE BOOL "Interal global cmake variable" FORCE)
 
 include(ObsHelpers)
 include(ObsCpack)
@@ -148,7 +148,7 @@ option(BUILD_TESTS "Build test directory (includes test sources and possibly a p
 mark_as_advanced(BUILD_TESTS)
 
 if(NOT INSTALLER_RUN)
-	option(ENABLE_UI "Enables the OBS user interfaces" ON)
+	option(ENABLE_UI "Enables the OBS user interfaces" OFF)
 	if(DISABLE_UI OR NOT ENABLE_UI)
 		set(UI_ENABLED FALSE)
 	else()
