@@ -22,6 +22,7 @@ endif()
 file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe"
 
+
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/avcodec-*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/avcodec-*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/avcodec-*.dll"
@@ -193,16 +194,29 @@ file(GLOB QT_IMAGEFORMATS_BIN_FILES
 file(GLOB QT_ICU_BIN_FILES
 	"${Qt5Core_DIR}/../../../bin/icu*.dll")
 
-set(ALL_BASE_BIN_FILES
-	${FFMPEG_BIN_FILES}
-	${X264_BIN_FILES}
-	${CURL_BIN_FILES}
-	${LUA_BIN_FILES}
-	${SSL_BIN_FILES}
-	${ZLIB_BIN_FILES}
-	${LIBFDK_BIN_FILES}
-	${FREETYPE_BIN_FILES}
-	${QT_ICU_BIN_FILES})
+if(NOT ILOS_BUILD)
+	set(ALL_BASE_BIN_FILES
+		${FFMPEG_BIN_FILES}
+		${X264_BIN_FILES}
+		${CURL_BIN_FILES}
+		${LUA_BIN_FILES}
+		${SSL_BIN_FILES}
+		${ZLIB_BIN_FILES}
+		${LIBFDK_BIN_FILES}
+		${FREETYPE_BIN_FILES}
+		${QT_ICU_BIN_FILES})
+endif()
+if(ILOS_BUILD)
+	set(ALL_BASE_BIN_FILES
+		${FFMPEG_BIN_FILES}
+		${X264_BIN_FILES}
+		${LUA_BIN_FILES}
+		${SSL_BIN_FILES}
+		${ZLIB_BIN_FILES}
+		${LIBFDK_BIN_FILES}
+		${FREETYPE_BIN_FILES}
+		${QT_ICU_BIN_FILES})
+endif()
 
 set(ALL_REL_BIN_FILES
 	${QT_BIN_FILES})

@@ -11,7 +11,9 @@ if(BUILD_LIBFF)
 endif()
 
 add_subdirectory(media-playback)
-add_subdirectory(file-updater)
+if (NOT ILOS_BUILD)
+	add_subdirectory(file-updater)
+endif()
 add_subdirectory(obs-scripting)
 
 if(WIN32)
