@@ -24,7 +24,7 @@ else()
 	add_definitions(-DNO_CRYPTO)
 endif()
 
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ftl-sdk/CMakeLists.txt")
+if (NOT ILOS_BUILD AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ftl-sdk/CMakeLists.txt")
 	find_package(Libcurl REQUIRED)
 
 	add_definitions(-DFTL_STATIC_COMPILE)
