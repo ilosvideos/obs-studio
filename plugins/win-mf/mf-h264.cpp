@@ -534,8 +534,8 @@ void RegisterMFH264Encoders()
 	for (auto e : encoders) {
 		/* ignore the software encoder due to the fact that we already
 		 * have an objectively superior software encoder available */
-		if (e->Type() == EncoderType::H264_SOFTWARE)
-			continue;
+		//if (e->Type() == EncoderType::H264_SOFTWARE)
+		//	continue;
 
 		/* certain encoders such as quicksync will be "available" but
 		 * not usable with certain processors */
