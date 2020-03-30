@@ -21,6 +21,8 @@ endif()
 
 file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe"
+	#"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/postproc-*.dll"
+	#"${FFMPEG_avfilter_INCLUDE_DIR}/../bin/avresample-*.dll"
 
 
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/avcodec-*.dll"
@@ -55,6 +57,8 @@ file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_swresample_INCLUDE_DIR}/../bin${_bin_suffix}/swresample-*.dll"
 	"${FFMPEG_swresample_INCLUDE_DIR}/bin${_bin_suffix}/swresample-*.dll"
 
+
+	#todo remove these
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libopus*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/opus*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libopus*.dll"
@@ -77,6 +81,9 @@ file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libbz2*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/zlib*.dll"
 
+
+
+	#todo need this?
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/libbz2*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/zlib*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/libbz2*.dll"
