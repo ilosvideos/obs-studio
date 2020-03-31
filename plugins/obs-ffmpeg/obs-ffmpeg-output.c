@@ -563,11 +563,6 @@ bool ffmpeg_data_init(struct ffmpeg_data *data, struct ffmpeg_cfg *config)
 		goto fail;
 	}
 
-	if (!data->output) {
-		blog(LOG_WARNING, "Couldn't create avformat context");
-		goto fail;
-	}
-
 	if (is_rtmp) {
 		data->output->oformat->video_codec = AV_CODEC_ID_H264;
 		data->output->oformat->audio_codec = AV_CODEC_ID_AAC;

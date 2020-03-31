@@ -1249,20 +1249,6 @@ void OBSApp::AppInit()
 				  Str("Untitled"));
 	}
 
-	if (!config_has_user_value(globalConfig, "Basic", "Profile")) {
-		config_set_string(globalConfig, "Basic", "Profile",
-				Str("Untitled"));
-		config_set_string(globalConfig, "Basic", "ProfileDir",
-				Str("Untitled"));
-	}
-
-	if (!config_has_user_value(globalConfig, "Basic", "SceneCollection")) {
-		config_set_string(globalConfig, "Basic",
-				"SceneCollection", Str("Untitled"));
-		config_set_string(globalConfig, "Basic",
-				"SceneCollectionFile", Str("Untitled"));
-	}
-
 #ifdef _WIN32
 	bool disableAudioDucking =
 		config_get_bool(globalConfig, "Audio", "DisableAudioDucking");
@@ -1350,13 +1336,6 @@ static void ui_task_handler(obs_task_t task, void *param, bool wait)
 	QMetaObject::invokeMethod(App(), "Exec",
 				  wait ? WaitConnection() : Qt::AutoConnection,
 				  Q_ARG(VoidFunc, doTask));
-}
-
-Q_DECLARE_METATYPE(VoidFunc)
-
-void OBSApp::Exec(VoidFunc func)
-{
-	func();
 }
 
 bool OBSApp::OBSInit()
