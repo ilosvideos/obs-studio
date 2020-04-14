@@ -250,20 +250,20 @@ static void MFH264_GetDefaults(obs_data_t *settings)
 #define PROP_DEF(x, y, z) obs_data_set_default_ ## x(settings, y, z)
 	PROP_DEF(int,    MFP_BITRATE,         2500);
 	PROP_DEF(bool,   MFP_USE_LOWLAT,      true);
-	PROP_DEF(int,    MFP_B_FRAMES,        2);
+	PROP_DEF(int,    MFP_B_FRAMES,        0);
 	PROP_DEF(bool,   MFP_USE_BUF_SIZE,    false);
 	PROP_DEF(int,    MFP_BUF_SIZE,        2500);
 	PROP_DEF(bool,   MFP_USE_MAX_BITRATE, false);
 	PROP_DEF(int,    MFP_MAX_BITRATE,     2500);
 	PROP_DEF(int,    MFP_KEY_INT,         2);
-	PROP_DEF(int,    MFP_RATE_CONTROL,    H264RateControlCBR);
+	PROP_DEF(int,    MFP_RATE_CONTROL,    H264RateControlVBR);
 	PROP_DEF(int,    MFP_PROFILE,         H264ProfileMain);
 	PROP_DEF(int,    MFP_MIN_QP,          1);
 	PROP_DEF(int,    MFP_MAX_QP,          51);
 	PROP_DEF(int,    MFP_QP_I,            26);
 	PROP_DEF(int,    MFP_QP_B,            26);
 	PROP_DEF(int,    MFP_QP_P,            26);
-	PROP_DEF(bool,   MFP_USE_ADVANCED,    false);
+	PROP_DEF(bool,   MFP_USE_ADVANCED,    true);
 #undef DEF
 }
 
@@ -380,7 +380,7 @@ static void *MFH264_Create(obs_data_t *settings, obs_encoder_t *encoder)
 				H264EntropyEncodingCABAC);
 
 		if (enc->advanced) {
-			enc.get()->h264Encoder->SetLowLatency(enc->lowLatency);
+			//enc.get()->h264Encoder->SetLowLatency(enc->lowLatency);
 			enc.get()->h264Encoder->SetBFrameCount(enc->bFrames);
 
 			enc.get()->h264Encoder->SetMinQP(enc->minQp);
