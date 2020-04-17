@@ -21,7 +21,6 @@ endif()
 
 file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe"
-	"${FFMPEG_avfilter_INCLUDE_DIR}/../bin/avresample-*.dll"
 
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/avcodec-*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/avcodec-*.dll"
@@ -53,14 +52,7 @@ file(GLOB FFMPEG_BIN_FILES
 
 	"${FFMPEG_swresample_INCLUDE_DIR}/../bin/swresample-*.dll"
 	"${FFMPEG_swresample_INCLUDE_DIR}/../bin${_bin_suffix}/swresample-*.dll"
-	"${FFMPEG_swresample_INCLUDE_DIR}/bin${_bin_suffix}/swresample-*.dll"
-
-	#todo need this?
-	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/libbz2*.dll"
-	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/zlib*.dll"
-	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/libbz2*.dll"
-	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/zlib*.dll"
-	)
+	"${FFMPEG_swresample_INCLUDE_DIR}/bin${_bin_suffix}/swresample-*.dll")
 
 file(GLOB X264_BIN_FILES
 	"${X264_INCLUDE_DIR}/../bin${_bin_suffix}/libx264-*.dll"
