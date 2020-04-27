@@ -245,6 +245,7 @@ static obs_properties_t *MFH264_GetProperties(void *)
 	return props;
 }
 
+// Updating these values dynamically from the screen recorder project is not setting them appropriately so we are just updating the defaults here.
 static void MFH264_GetDefaults(obs_data_t *settings)
 {
 #define PROP_DEF(x, y, z) obs_data_set_default_ ## x(settings, y, z)
@@ -532,11 +533,6 @@ void RegisterMFH264Encoders()
 
 	auto encoders = EncoderDescriptor::Enumerate();
 	for (auto e : encoders) {
-		/* ignore the software encoder due to the fact that we already
-		 * have an objectively superior software encoder available */
-		//if (e->Type() == EncoderType::H264_SOFTWARE)
-		//	continue;
-
 		/* certain encoders such as quicksync will be "available" but
 		 * not usable with certain processors */
 		if (!CanSpawnEncoder(e))
