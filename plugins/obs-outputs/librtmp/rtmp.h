@@ -49,7 +49,7 @@
 
 #include "amf.h"
 
-#ifdef CRYPTO
+#if defined(CRYPTO) || defined(USE_ONLY_MD5)
 #if defined(USE_MBEDTLS)
 #include <mbedtls/version.h>
 
