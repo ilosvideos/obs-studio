@@ -250,7 +250,6 @@ static obs_properties_t *MFH264_GetProperties(void *)
 	return props;
 }
 
-// Updating these values dynamically from the screen recorder project is not setting them appropriately so we are just updating the defaults here.
 static void MFH264_GetDefaults(obs_data_t *settings)
 {
 #define PROP_DEF(x, y, z) obs_data_set_default_ ## x(settings, y, z)
