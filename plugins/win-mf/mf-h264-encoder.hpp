@@ -120,6 +120,7 @@ namespace MF {
 		bool SetEntropyEncoding(H264EntropyEncoding entropyEncoding);
 		bool SetMinQP(UINT32 minQp);
 		bool SetMaxQP(UINT32 maxQp);
+                bool SetMaxNumRefFrame(UINT32 maxNumRefFrame);
 
 	private:
 		H264Encoder(H264Encoder const&) = delete;

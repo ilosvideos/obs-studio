@@ -413,6 +413,22 @@ fail:
 	return false;
 }
 
+bool H264Encoder::SetMaxNumRefFrame(UINT32 maxNumRefFrame)
+{
+	HRESULT hr;
+
+	if (codecApi) {
+	      HR_CHECK(LOG_WARNING, SetCodecProperty(codecApi,
+				CODECAPI_AVEncVideoMaxNumRefFrame,
+				UINT32(maxNumRefFrame)));
+	}
+
+	return true;
+
+fail:
+	return false;
+}
+
 bool H264Encoder::Initialize(std::function<bool(void)> func)
 {
 	ProfileScope("H264Encoder::Initialize");
