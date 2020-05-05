@@ -381,7 +381,7 @@ static void *MFH264_Create(obs_data_t *settings, obs_encoder_t *encoder)
 				H264EntropyEncodingCABAC);
 
 		if (enc->advanced) {
-			//enc.get()->h264Encoder->SetLowLatency(enc->lowLatency);
+			enc.get()->h264Encoder->SetLowLatency(enc->lowLatency);
 			enc.get()->h264Encoder->SetBFrameCount(enc->bFrames);
 
 			enc.get()->h264Encoder->SetMinQP(enc->minQp);

@@ -355,7 +355,7 @@ bool H264Encoder::SetLowLatency(bool lowLatency)
 
 	if (codecApi) {
 		HR_CHECK(LOG_WARNING, SetCodecProperty(codecApi,
-			CODECAPI_AVEncCommonLowLatency,
+			CODECAPI_AVLowLatencyMode,
 			lowLatency));
 	}
 
