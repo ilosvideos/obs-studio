@@ -36,14 +36,14 @@ namespace MF {
 	};
 
 	struct H264QP {
-		UINT16 defaultQp;
-		UINT16 i;
-		UINT16 p;
-		UINT16 b;
+		UINT64 defaultQp;
+		UINT64 i;
+		UINT64 p;
+		UINT64 b;
 
 		UINT64 Pack(bool packDefault) {
-			int shift = packDefault ? 0 : 16;
-			UINT64 packedQp;
+			int shift = packDefault ? 16 : 0;
+			UINT64 packedQp = 0;
 			if (packDefault)
 				packedQp = defaultQp;
 
