@@ -32,6 +32,7 @@ struct MFH264_Encoder {
 	uint32_t maxQp;
 	bool lowLatency;
 	uint32_t bFrames;
+        uint32_t maxNumRefFrame;
 
 	const char *profiler_encode = nullptr;
 };
@@ -40,6 +41,7 @@ struct MFH264_Encoder {
 #define TEXT_ADVANCED        MFTEXT("Advanced")
 #define TEXT_LOW_LAT         MFTEXT("LowLatency")
 #define TEXT_B_FRAMES        MFTEXT("BFrames")
+#define TEXT_MAX_NUM_REF_FRAME  MFTEXT("MaxNumRefFrame")
 #define TEXT_BITRATE         MFTEXT("Bitrate")
 #define TEXT_CUSTOM_BUF      MFTEXT("CustomBufsize")
 #define TEXT_BUF_SIZE        MFTEXT("BufferSize")
@@ -61,6 +63,7 @@ struct MFH264_Encoder {
 #define MFP_USE_ADVANCED     MFP("use_advanced")
 #define MFP_USE_LOWLAT       MFP("use_low_latency")
 #define MFP_B_FRAMES         MFP("b_frames")
+#define MFP_MAX_NUM_REF_FRAME MFP("max_num_ref_frame")
 #define MFP_BITRATE          MFP("bitrate")
 #define MFP_USE_BUF_SIZE     MFP("use_buf_size")
 #define MFP_BUF_SIZE         MFP("buf_size")
@@ -131,6 +134,7 @@ static bool use_advanced_modified(obs_properties_t *ppts, obs_property_t *p,
 	set_visible(ppts, MFP_MAX_QP,       advanced);
 	set_visible(ppts, MFP_USE_LOWLAT,   advanced);
 	set_visible(ppts, MFP_B_FRAMES,     advanced);
+        set_visible(ppts, MFP_MAX_NUM_REF_FRAME,  advanced);
 
 	H264RateControl rateControl = (H264RateControl)obs_data_get_int(
 		settings, MFP_RATE_CONTROL);
@@ -240,6 +244,7 @@ static obs_properties_t *MFH264_GetProperties(void *)
 
 	obs_properties_add_bool(props, MFP_USE_LOWLAT, TEXT_LOW_LAT);
 	obs_properties_add_int(props,  MFP_B_FRAMES,   TEXT_B_FRAMES, 0, 16, 1);
+        obs_properties_add_int(props,  MFP_MAX_NUM_REF_FRAME,     TEXT_MAX_NUM_REF_FRAME,   1, 4, 1);
 	obs_properties_add_int(props,  MFP_MIN_QP,     TEXT_MIN_QP,   1, 51, 1);
 	obs_properties_add_int(props,  MFP_MAX_QP,     TEXT_MAX_QP,   1, 51, 1);
 	return props;
@@ -251,20 +256,21 @@ static void MFH264_GetDefaults(obs_data_t *settings)
 #define PROP_DEF(x, y, z) obs_data_set_default_ ## x(settings, y, z)
 	PROP_DEF(int,    MFP_BITRATE,         2500);
 	PROP_DEF(bool,   MFP_USE_LOWLAT,      true);
-	PROP_DEF(int,    MFP_B_FRAMES,        0);
+	PROP_DEF(int,    MFP_B_FRAMES,        2);
+        PROP_DEF(int,    MFP_MAX_NUM_REF_FRAME, 2);
 	PROP_DEF(bool,   MFP_USE_BUF_SIZE,    false);
 	PROP_DEF(int,    MFP_BUF_SIZE,        2500);
 	PROP_DEF(bool,   MFP_USE_MAX_BITRATE, false);
 	PROP_DEF(int,    MFP_MAX_BITRATE,     2500);
 	PROP_DEF(int,    MFP_KEY_INT,         2);
-	PROP_DEF(int,    MFP_RATE_CONTROL,    H264RateControlVBR);
+	PROP_DEF(int,    MFP_RATE_CONTROL,    H264RateControlCBR);
 	PROP_DEF(int,    MFP_PROFILE,         H264ProfileMain);
 	PROP_DEF(int,    MFP_MIN_QP,          1);
 	PROP_DEF(int,    MFP_MAX_QP,          51);
 	PROP_DEF(int,    MFP_QP_I,            26);
 	PROP_DEF(int,    MFP_QP_B,            26);
 	PROP_DEF(int,    MFP_QP_P,            26);
-	PROP_DEF(bool,   MFP_USE_ADVANCED,    true);
+	PROP_DEF(bool,   MFP_USE_ADVANCED,    false);
 #undef DEF
 }
 
@@ -299,6 +305,7 @@ static void UpdateParams(MFH264_Encoder *enc, obs_data_t *settings)
 	enc->qp.b          = PROP_GET(int,  MFP_QP_B,         uint16_t);
 	enc->lowLatency    = PROP_GET(bool, MFP_USE_LOWLAT,   bool);
 	enc->bFrames       = PROP_GET(int,  MFP_B_FRAMES,     uint32_t);
+        enc->maxNumRefFrame = PROP_GET(int,  MFP_MAX_NUM_REF_FRAME, uint16_t);
 	enc->advanced      = PROP_GET(bool, MFP_USE_ADVANCED, bool);
 #undef PROP_GET
 }
@@ -383,6 +390,7 @@ static void *MFH264_Create(obs_data_t *settings, obs_encoder_t *encoder)
 		if (enc->advanced) {
 			enc.get()->h264Encoder->SetLowLatency(enc->lowLatency);
 			enc.get()->h264Encoder->SetBFrameCount(enc->bFrames);
+                        enc.get()->h264Encoder->SetMaxNumRefFrame(enc->maxNumRefFrame);
 
 			enc.get()->h264Encoder->SetMinQP(enc->minQp);
 			enc.get()->h264Encoder->SetMaxQP(enc->maxQp);
@@ -538,7 +546,7 @@ void RegisterMFH264Encoders()
 		if (!CanSpawnEncoder(e))
 			continue;
 
-		info.caps = OBS_ENCODER_CAP_DEPRECATED;
+		info.caps = OBS_ENCODER_CAP_DYN_BITRATE;
 		info.id = e->Id();
 		info.type_data = new TypeData(e);
 		info.free_type_data = [] (void *type_data) {
