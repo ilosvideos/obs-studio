@@ -21,7 +21,7 @@
 
 #ifndef MF_LOG_COM
 #define MF_LOG_COM(level, msg, hr) MF_LOG(level, \
-		msg " failed,  %S (0x%08lx)", \
+		msg " failed,  %ls (0x%08lx)", \
 		_com_error(hr).ErrorMessage(), hr)
 #endif
 

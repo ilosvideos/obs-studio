@@ -11,7 +11,7 @@
 	MF_LOG_ENCODER("AAC", ObsEncoder(), level, format, ##__VA_ARGS__)
 
 #define MF_LOG_COM(msg, hr) MF_LOG_AAC(LOG_ERROR, \
-		msg " failed,  %S (0x%08lx)", \
+		msg " failed,  %ls (0x%08lx)", \
 		_com_error(hr).ErrorMessage(), hr)
 
 #define HRC(r) \
