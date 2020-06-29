@@ -19,9 +19,7 @@ else()
 	set(_bin_suffix 32)
 endif()
 
-file(GLOB FFMPEG_BIN_FILES
-	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe"
-
+file(GLOB FFMPEG_BIN_FILES_COMMON
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/avcodec-*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/avcodec-*.dll"
 	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/avcodec-*.dll"
@@ -53,6 +51,43 @@ file(GLOB FFMPEG_BIN_FILES
 	"${FFMPEG_swresample_INCLUDE_DIR}/../bin/swresample-*.dll"
 	"${FFMPEG_swresample_INCLUDE_DIR}/../bin${_bin_suffix}/swresample-*.dll"
 	"${FFMPEG_swresample_INCLUDE_DIR}/bin${_bin_suffix}/swresample-*.dll")
+
+file(GLOB FFMPEG_BIN_FILES_DEFAULT
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libopus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/opus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libopus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/opus*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libogg*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libvorbis*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libogg*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libvorbis*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libvpx*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libvpx*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libsrt*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libsrt*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libmbedcrypto*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libmbedcrypto*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/libopus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/opus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/libopus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/opus*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/libbz2*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/zlib*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/libbz2*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin/zlib*.dll"	
+
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/libbz2*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin${_bin_suffix}/zlib*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/libbz2*.dll"	
+	"${FFMPEG_avcodec_INCLUDE_DIR}/bin${_bin_suffix}/zlib*.dll")
+
+file(GLOB FFMPEG_BIN_FILES_ILOS
+	"${FFMPEG_avcodec_INCLUDE_DIR}/../bin/ffmpeg.exe")
 
 file(GLOB X264_BIN_FILES
 	"${X264_INCLUDE_DIR}/../bin${_bin_suffix}/libx264-*.dll"
@@ -160,7 +195,7 @@ file(GLOB QT_ICU_BIN_FILES
 	"${Qt5Core_DIR}/../../../bin/icu*.dll")
 
 set(ALL_BASE_BIN_FILES
-	${FFMPEG_BIN_FILES}
+	${FFMPEG_BIN_FILES_COMMON}
 	${LUA_BIN_FILES}
 	${SSL_BIN_FILES}
 	${ZLIB_BIN_FILES}
@@ -168,10 +203,20 @@ set(ALL_BASE_BIN_FILES
 	${FREETYPE_BIN_FILES}
 	${QT_ICU_BIN_FILES})
 
+if(NOT ILOS_CUSTOM_FFMPEG)
+	list(APPEND ALL_BASE_BIN_FILES
+		${FFMPEG_BIN_FILES_DEFAULT}
+		${X264_BIN_FILES})
+endif()
+
 if(NOT ILOS_BUILD)
 	list(APPEND ALL_BASE_BIN_FILES
-		${X264_BIN_FILES}
 		${CURL_BIN_FILES})
+endif()
+
+if(ILOS_BUILD)
+	list(APPEND ALL_BASE_BIN_FILES
+		${FFMPEG_BIN_FILES_ILOS})
 endif()
 
 set(ALL_REL_BIN_FILES
